@@ -211,7 +211,9 @@ name = "collocate-compose"
 version = "0.1.0"
 dependencies = [
  "collocate-core",
+ "collocate-image",
  "collocate-net",
+ "collocate-registry",
  "serde",
  "serde-saphyr",
  "serde_json",

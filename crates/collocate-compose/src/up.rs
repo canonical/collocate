@@ -1,5 +1,5 @@
 use crate::build::{build_spec, BuildCtx};
-use crate::model::ComposeFile;
+use crate::model::{ComposeFile, RegistryDef};
 use crate::plan::{diff, shutdown_order, topo_order, Actual, Item, Plan};
 use crate::template::{references, resolve, Context, Reference};
 use collocate_core::client::Api;
@@ -8,10 +8,27 @@ use collocate_core::request::{ContainerInfo, HealthState, LbSpec, Request, Respo
 use collocate_core::spec::{Series, Spec};
 use collocate_core::{Error, Result};
 use collocate_net::ipam::{Ipam, Subnet};
+use collocate_image::pull::PullPolicy;
+use collocate_registry::auth::Credentials;
+use collocate_registry::Reference as OciReference;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+struct ComposeCredentials<'a> {
+    registries: &'a BTreeMap<String, RegistryDef>,
+    tctx: &'a Context,
+}
+
+impl Credentials for ComposeCredentials<'_> {
+    fn for_registry(&self, registry: &str) -> Option<(String, String)> {
+        let def = self.registries.get(registry)?;
+        let user = resolve(&def.username, self.tctx).ok()?;
+        let pass = resolve(&def.password, self.tctx).ok()?;
+        Some((user, pass))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct UpOptions {
@@ -172,10 +189,17 @@ impl BuildState {
 
     pub fn spec(&mut self, file: &ComposeFile, opts: &UpOptions, service: &str, idx: u32) -> Result<Spec> {
         let base = |_: Series| Ok("latest".to_string());
-        let oci = |image: &str| -> Result<(String, Vec<String>)> {
-            Err(Error::Invalid(format!("image {image}: pulling OCI images is not available in this build")))
-        };
         let tctx = Context { secrets: self.secrets.clone(), addresses: self.addresses.clone(), lb_addresses: self.lb_vips.clone() };
+        let registries = file.registries.clone();
+        let state_dir = opts.state_dir.clone();
+        let dry_run = opts.dry_run;
+        let oci = |image: &str| -> Result<(String, Vec<String>)> {
+            let reference = OciReference::parse(image).map_err(|e| Error::Invalid(format!("image {image}: {e}")))?;
+            let creds = ComposeCredentials { registries: &registries, tctx: &tctx };
+            let policy = if dry_run { PullPolicy::Never } else { PullPolicy::Missing };
+            let meta = collocate_image::pull::ensure_pulled(&reference, &state_dir, &creds, policy)?;
+            Ok((meta.digest, meta.layers))
+        };
         let base_dir = opts.base_dir.clone();
         let dry = opts.dry_run;
         let cfgs = file.configs.clone();
