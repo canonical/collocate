@@ -1,0 +1,49 @@
+[package]
+name = "collocate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The collocate CLI."
+
+[lib]
+name = "collocate_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "collocate"
+path = "src/main.rs"
+
+[[bin]]
+name = "collocate-relay"
+path = "src/relay.rs"
+
+[dependencies]
+collocate-core.workspace = true
+collocate-sys.workspace = true
+collocate-compose.workspace = true
+collocate-image.workspace = true
+collocate-cluster.workspace = true
+collocate-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
+libc.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tar.workspace = true
+sha2.workspace = true
+collocated = { path = "../collocated" }
+
+[package.metadata.deb]
+name = "collocate"
+maintainer = "collocate maintainers"
+section = "admin"
+priority = "optional"
+extended-description = "The collocate CLI: run, list, exec, load-balance and compose containers managed by collocated."
+assets = [
+    ["target/release/collocate", "usr/bin/collocate", "755"],
+    ["target/release/collocate-relay", "usr/bin/collocate-relay", "755"],
+]
