@@ -4,3 +4,4 @@ pub mod extract;
 pub mod import;
 pub mod kind;
 pub mod oci;
+pub mod pull;
