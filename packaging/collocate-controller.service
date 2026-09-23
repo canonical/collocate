@@ -1,0 +1,12 @@
+[Unit]
+Description=collocate controller (autoscaling, rolling updates, self-healing)
+After=collocated.service
+Requires=collocated.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/collocate-controller --file /etc/collocate/collocate-compose.yaml
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
