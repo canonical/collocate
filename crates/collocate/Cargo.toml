@@ -22,6 +22,7 @@ collocate-core.workspace = true
 collocate-sys.workspace = true
 collocate-compose.workspace = true
 collocate-image.workspace = true
+collocate-registry.workspace = true
 collocate-cluster.workspace = true
 collocate-store.workspace = true
 serde.workspace = true

@@ -133,6 +133,13 @@ pub enum ImageCmd {
     Import {
         file: PathBuf,
     },
+    Pull {
+        reference: String,
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        password_stdin: bool,
+    },
     #[command(visible_alias = "ls")]
     List,
     Show {

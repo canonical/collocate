@@ -183,6 +183,7 @@ dependencies = [
  "collocate-compose",
  "collocate-core",
  "collocate-image",
+ "collocate-registry",
  "collocate-store",
  "collocate-sys",
  "collocated",

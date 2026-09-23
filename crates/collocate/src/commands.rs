@@ -13,6 +13,7 @@ use collocate_core::request::{ContainerInfo, LbSpec, LbStatus, Request, Response
 use collocate_core::spec::Series;
 use collocate_core::{Error, Result};
 use collocate_image::config::ImageMeta;
+use collocate_image::pull::PullPolicy;
 use collocate_sys::fdpass::SendWithFds;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -667,6 +668,17 @@ fn load_balancer(cli: &Cli, cmd: &LoadBalancerCmd) -> Result<i32> {
     }
 }
 
+struct CliCredentials {
+    username: Option<String>,
+    password: Option<String>,
+}
+
+impl collocate_registry::auth::Credentials for CliCredentials {
+    fn for_registry(&self, _registry: &str) -> Option<(String, String)> {
+        Some((self.username.clone()?, self.password.clone().unwrap_or_default()))
+    }
+}
+
 fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
     let store = collocate_image::config::ImageStore::new(&cli.state_dir);
     match cmd {
@@ -687,6 +699,18 @@ fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
                 if !m.config.volumes.is_empty() {
                     eprintln!("note: {} declares volumes {:?}; mount host paths there with -v to keep the data", m.name, m.config.volumes);
                 }
+            }
+            Ok(0)
+        }
+        ImageCmd::Pull { reference, username, password_stdin } => {
+            let reference = collocate_registry::Reference::parse(reference).map_err(|e| Error::Invalid(e.to_string()))?;
+            let password = if *password_stdin { Some(read_stdin()?) } else { None };
+            let creds = CliCredentials { username: username.clone(), password };
+            let meta = collocate_image::pull::ensure_pulled(&reference, &cli.state_dir, &creds, PullPolicy::Always)?;
+            if cli.format == Format::Json {
+                json(&meta);
+            } else {
+                narrate(cli, &success_line("Pulled", &meta.name));
             }
             Ok(0)
         }
