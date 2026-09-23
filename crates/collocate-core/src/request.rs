@@ -68,24 +68,84 @@ pub struct LbStatus {
 #[serde(tag = "verb", rename_all = "snake_case")]
 pub enum Request {
     Run(Box<Spec>),
-    Start { target: String },
-    Stop { target: String, timeout_secs: Option<u64> },
-    Restart { target: String, timeout_secs: Option<u64> },
-    Kill { target: String, signal: i32 },
-    Rm { target: String, force: bool, keep_data: bool },
-    Wait { target: String },
-    Logs { target: String, tail: Option<usize>, offset: Option<u64> },
-    Exec { target: String, argv: Vec<String>, env: Vec<(String, String)>, user: Option<String>, workdir: Option<String>, tty: bool },
-    ExecProbe { target: String, argv: Vec<String>, timeout_secs: u64 },
-    Ps { all: bool, project: Option<String> },
-    SecretEnsure { project: String, name: String, generate: String, length: usize },
-    SecretReveal { project: String, name: String },
-    SecretSet { project: String, name: String, value: String },
-    SecretList { project: Option<String> },
-    SecretRemove { project: String, name: String },
-    Stats { project: Option<String> },
-    LbSet { lb: LbSpec },
-    LbRemove { project: String, name: String },
+    Start {
+        target: String,
+    },
+    Stop {
+        target: String,
+        timeout_secs: Option<u64>,
+    },
+    Restart {
+        target: String,
+        timeout_secs: Option<u64>,
+    },
+    Kill {
+        target: String,
+        signal: i32,
+    },
+    Rm {
+        target: String,
+        force: bool,
+        keep_data: bool,
+    },
+    Wait {
+        target: String,
+    },
+    Logs {
+        target: String,
+        tail: Option<usize>,
+        offset: Option<u64>,
+    },
+    Exec {
+        target: String,
+        argv: Vec<String>,
+        env: Vec<(String, String)>,
+        user: Option<String>,
+        workdir: Option<String>,
+        tty: bool,
+        timeout_secs: Option<u64>,
+    },
+    ExecProbe {
+        target: String,
+        argv: Vec<String>,
+        timeout_secs: u64,
+    },
+    Ps {
+        all: bool,
+        project: Option<String>,
+    },
+    SecretEnsure {
+        project: String,
+        name: String,
+        generate: String,
+        length: usize,
+    },
+    SecretReveal {
+        project: String,
+        name: String,
+    },
+    SecretSet {
+        project: String,
+        name: String,
+        value: String,
+    },
+    SecretList {
+        project: Option<String>,
+    },
+    SecretRemove {
+        project: String,
+        name: String,
+    },
+    Stats {
+        project: Option<String>,
+    },
+    LbSet {
+        lb: LbSpec,
+    },
+    LbRemove {
+        project: String,
+        name: String,
+    },
     LbList,
     Info,
     Shutdown,

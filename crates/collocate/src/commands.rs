@@ -360,7 +360,7 @@ pub fn run(cli: &Cli) -> Result<i32> {
             follow_logs(cli, target, *follow, *tail)?;
             Ok(0)
         }
-        Command::Exec { env, user, workdir, target, command } => {
+        Command::Exec { env, user, workdir, timeout, target, command } => {
             let envs = env.iter().filter_map(|e| e.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))).collect();
             let mut c = connect(cli)?;
             let (i, o, e) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
@@ -371,6 +371,7 @@ pub fn run(cli: &Cli) -> Result<i32> {
                 user: user.clone(),
                 workdir: workdir.clone(),
                 tty: false,
+                timeout_secs: *timeout,
             };
             c.send_with_fds(&req, &[&i.as_raw_fd(), &o.as_raw_fd(), &e.as_raw_fd()])?;
             match c.read_response()? {
@@ -564,7 +565,7 @@ fn parse_cp_endpoint(s: &str) -> CpEndpoint {
 
 fn cp_exec(cli: &Cli, target: &str, argv: Vec<String>, stdin: &std::fs::File, stdout: &std::fs::File) -> Result<i32> {
     let mut c = connect(cli)?;
-    let req = Request::Exec { target: target.to_string(), argv, env: vec![], user: None, workdir: None, tty: false };
+    let req = Request::Exec { target: target.to_string(), argv, env: vec![], user: None, workdir: None, tty: false, timeout_secs: None };
     let stderr = std::fs::File::open("/dev/null")?;
     c.send_with_fds(&req, &[&stdin.as_raw_fd(), &stdout.as_raw_fd(), &stderr.as_raw_fd()])?;
     match c.read_response()? {

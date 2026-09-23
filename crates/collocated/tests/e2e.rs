@@ -378,6 +378,7 @@ fn exec_runs_inside_a_running_container() {
         user: None,
         workdir: None,
         tty: false,
+        timeout_secs: None,
     };
     c.send_with_fds(&req, &[&null, &out, &out]).unwrap();
     match c.read_response().unwrap() {

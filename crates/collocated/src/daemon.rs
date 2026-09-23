@@ -81,6 +81,16 @@ struct Conn {
 struct ExecProc {
     pidfd: OwnedFd,
     conn: u64,
+    deadline: Option<Instant>,
+}
+
+struct ExecArgs {
+    target: String,
+    argv: Vec<String>,
+    env: Vec<(String, String)>,
+    user: Option<String>,
+    workdir: Option<String>,
+    timeout_secs: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -852,7 +862,9 @@ impl Daemon {
                 };
                 Ok(Some(Response::Log { data: text, next_offset: total }))
             }
-            Request::Exec { target, argv, env, user, workdir, tty: _ } => self.op_exec(conn, &target, argv, env, user, workdir),
+            Request::Exec { target, argv, env, user, workdir, tty: _, timeout_secs } => {
+                self.op_exec(conn, ExecArgs { target, argv, env, user, workdir, timeout_secs })
+            }
             Request::ExecProbe { target, argv, timeout_secs } => self.op_exec_probe(conn, &target, argv, timeout_secs),
             Request::Ps { all, project } => {
                 let list = self
@@ -1005,16 +1017,8 @@ impl Daemon {
         Ok(None)
     }
 
-    fn op_exec(
-        &mut self,
-        conn: u64,
-        target: &str,
-        argv: Vec<String>,
-        env: Vec<(String, String)>,
-        user: Option<String>,
-        workdir: Option<String>,
-    ) -> Result<Option<Response>> {
-        let id = self.resolve(target)?;
+    fn op_exec(&mut self, conn: u64, args: ExecArgs) -> Result<Option<Response>> {
+        let id = self.resolve(&args.target)?;
         let fds: Vec<OwnedFd> = {
             let c = self.conns.get_mut(&conn).ok_or_else(|| Error::Internal("connection vanished".into()))?;
             if c.fds.len() < 3 {
@@ -1022,22 +1026,23 @@ impl Daemon {
             }
             c.fds.drain(..3).collect()
         };
-        let live = self.live.get(&id).ok_or_else(|| Error::Conflict(format!("{target} is not running")))?;
+        let live = self.live.get(&id).ok_or_else(|| Error::Conflict(format!("{} is not running", args.target)))?;
         let req = ExecRequest {
             init_pid: live.pid,
             init_pidfd: live.pidfd.as_raw_fd(),
             cgroup_procs: self.cgroups.container_dir(&id).join("cgroup.procs"),
             spec: &live.spec,
-            argv,
-            env,
-            user,
-            workdir,
+            argv: args.argv,
+            env: args.env,
+            user: args.user,
+            workdir: args.workdir,
             stdio: [fds[0].as_raw_fd(), fds[1].as_raw_fd(), fds[2].as_raw_fd()],
         };
         let (_pid, pidfd) = spawn_exec(&req)?;
         let token = self.token();
         io(self.epoll.add(pidfd.as_raw_fd(), token, Events::READABLE))?;
-        self.execs.insert(token, ExecProc { pidfd, conn });
+        let deadline = args.timeout_secs.map(|t| Instant::now() + Duration::from_secs(t.max(1)));
+        self.execs.insert(token, ExecProc { pidfd, conn, deadline });
         Ok(None)
     }
 
@@ -1247,6 +1252,12 @@ impl Daemon {
                 let _ = send_signal(&p.pidfd, libc::SIGKILL);
             }
         }
+        let overdue_execs: Vec<u64> = self.execs.iter().filter(|(_, e)| e.deadline.is_some_and(|d| d <= now)).map(|(t, _)| *t).collect();
+        for token in overdue_execs {
+            if let Some(e) = self.execs.get(&token) {
+                let _ = send_signal(&e.pidfd, libc::SIGKILL);
+            }
+        }
         if now.duration_since(self.last_health) >= HEALTH_TICK {
             self.last_health = now;
             self.check_health(now);
@@ -1352,6 +1363,11 @@ impl Daemon {
         }
         for p in self.probes.values() {
             next = next.min(p.deadline);
+        }
+        for e in self.execs.values() {
+            if let Some(d) = e.deadline {
+                next = next.min(d);
+            }
         }
         let _ = self.timer.arm(next.saturating_duration_since(now));
     }
