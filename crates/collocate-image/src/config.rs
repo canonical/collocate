@@ -234,6 +234,15 @@ pub fn spec_from_image(meta: &ImageMeta, ov: &RunOverrides) -> Result<Spec> {
             });
         }
     }
+    if spec.healthcheck.is_none() && meta.kind == ImageKind::Pebble {
+        spec.healthcheck = Some(Healthcheck {
+            kind: HealthKind::Pebble { level: None },
+            interval_secs: 10,
+            timeout_secs: 5,
+            retries: 3,
+            start_period_secs: 0,
+        });
+    }
     if ov.publish_exposed {
         for (port, proto) in meta.config.exposed_ports() {
             let proto = if proto == "udp" { Proto::Udp } else { Proto::Tcp };
