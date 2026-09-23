@@ -229,6 +229,16 @@ fn cp_requires_exactly_one_side_to_reference_a_container() {
 }
 
 #[test]
+fn commit_reaches_the_daemon_and_reports_its_error() {
+    need_root!();
+    let env = Env::start();
+    env.ok(&["run", "-d", "--series", "24.04", "--name", "plain", "--", "/bin/sleep", "30"]);
+    let out = env.cli(&["commit", "plain", "snap:v1"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("image"), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
 fn list_shows_an_empty_state_message_with_no_containers() {
     need_root!();
     let env = Env::start();
