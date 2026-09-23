@@ -1,5 +1,7 @@
-use crate::extract::Stats;
+use crate::config::{ImageConfig, ImageStore};
+use crate::extract::{extract_maybe_gzip, Stats, WhiteoutMode};
 use collocate_core::Result;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs;
@@ -124,4 +126,54 @@ pub fn tar_layer<W: Write>(src: &Path, writer: W) -> Result<Stats> {
     walk(&mut b, src, Path::new(""), &mut inodes, &mut stats)?;
     b.into_inner()?;
     Ok(stats)
+}
+
+fn is_root() -> bool {
+    unsafe { libc::geteuid() == 0 }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+struct HashingWriter<'a, W: Write> {
+    inner: W,
+    hasher: &'a mut Sha256,
+}
+
+impl<W: Write> Write for HashingWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+pub fn commit_upper_to_store(upper: &Path, store: &ImageStore) -> Result<String> {
+    fs::create_dir_all(store.layers_dir())?;
+    let tmp = store.layers_dir().join(format!(".tmp-commit-{}", collocate_core::id::random_hex(8)?));
+    let mut hasher = Sha256::new();
+    {
+        let file = fs::File::create(&tmp)?;
+        let mut hashing = HashingWriter { inner: file, hasher: &mut hasher };
+        tar_layer(upper, &mut hashing)?;
+    }
+    let digest = format!("sha256:{}", hex(&hasher.finalize()));
+    let final_dir = store.layer_dir(&digest);
+    if !final_dir.exists() {
+        let mode = if is_root() { WhiteoutMode::Overlay } else { WhiteoutMode::Skip };
+        let raw = fs::File::open(&tmp)?;
+        extract_maybe_gzip(raw, &final_dir, mode)?;
+    }
+    let _ = fs::remove_file(&tmp);
+    Ok(digest)
+}
+
+pub fn synthetic_digest(layers: &[String], config: &ImageConfig) -> Result<String> {
+    let bytes = serde_json::to_vec(&(layers, config))?;
+    Ok(format!("sha256:{}", hex(&Sha256::digest(bytes))))
 }
