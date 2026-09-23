@@ -23,6 +23,7 @@ flate2 = "1"
 ruzstd = "0.9"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 collocate-registry = { path = "crates/collocate-registry" }
+collocate-pebble = { path = "crates/collocate-pebble" }
 collocate-core = { path = "crates/collocate-core" }
 collocate-sys = { path = "crates/collocate-sys" }
 collocate-store = { path = "crates/collocate-store" }
