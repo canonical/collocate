@@ -1,0 +1,15 @@
+[package]
+name = "collocate-compose"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+collocate-core.workspace = true
+collocate-net.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
