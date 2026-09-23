@@ -247,6 +247,7 @@ name = "collocate-image"
 version = "0.1.0"
 dependencies = [
  "collocate-core",
+ "collocate-registry",
  "flate2",
  "libc",
  "serde",
