@@ -1,0 +1,12 @@
+[package]
+name = "collocate-cluster"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+collocate-core.workspace = true
+collocate-compose.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
