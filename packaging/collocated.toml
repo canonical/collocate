@@ -1,0 +1,9 @@
+state_dir = "/var/lib/collocate"
+run_dir = "/run/collocate"
+subnet = "172.30.0.0/16"
+bridge = "collocate0"
+root_mode = "auto"
+init_path = "/usr/libexec/collocate/collocate-init"
+
+[defaults]
+pids_max = 4096
