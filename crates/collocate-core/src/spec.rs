@@ -187,6 +187,8 @@ pub struct Spec {
     pub root: RootSource,
     #[serde(default)]
     pub persistent: bool,
+    #[serde(default)]
+    pub idle_timeout_secs: Option<u64>,
     pub process: Process,
     pub hostname: String,
     #[serde(default)]
@@ -230,6 +232,7 @@ impl Spec {
             name: name.to_string(),
             root,
             persistent: false,
+            idle_timeout_secs: None,
             process: Process {
                 argv,
                 env: Vec::new(),
