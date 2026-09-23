@@ -259,6 +259,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "collocate-registry"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "collocate-runtime"
 version = "0.1.0"
 dependencies = [
