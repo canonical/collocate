@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(name = "collocate", version, about = "Run and manage lightweight containers.")]
 #[command(
-    after_help = "Containers:\n  run, list, status, start, stop, restart, exec, cp, logs, wait, delete\n\nCompose:\n  up, down, plan, config\n\nResources:\n  image, secret, load-balancer, cluster\n\nDiagnostics:\n  info, doctor\n\nRun 'collocate help <command>' for more information on a command."
+    after_help = "Containers:\n  run, list, status, start, stop, restart, exec, cp, commit, logs, wait, delete\n\nCompose:\n  up, down, plan, config\n\nResources:\n  image, secret, load-balancer, cluster\n\nDiagnostics:\n  info, doctor\n\nRun 'collocate help <command>' for more information on a command."
 )]
 pub struct Cli {
     #[arg(long, global = true, default_value = "/run/collocate/collocate.sock", env = "COLLOCATE_HOST")]
@@ -317,6 +317,10 @@ pub enum Command {
     Cp {
         src: String,
         dst: String,
+    },
+    Commit {
+        target: String,
+        image: String,
     },
     #[command(subcommand)]
     Secret(SecretCmd),

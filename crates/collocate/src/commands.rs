@@ -380,6 +380,18 @@ pub fn run(cli: &Cli) -> Result<i32> {
             }
         }
         Command::Cp { src, dst } => cp(cli, src, dst),
+        Command::Commit { target, image } => match call(cli, Request::Commit { target: target.clone(), image: image.clone() })? {
+            Response::Text { text } => {
+                narrate(cli, &success_line("Committed", &format!("{image} ({text})")));
+                if cli.format == Format::Json {
+                    json(&text);
+                } else {
+                    println!("{text}");
+                }
+                Ok(0)
+            }
+            other => Err(Error::Internal(format!("unexpected response {other:?}"))),
+        },
         Command::Secret(cmd) => secret(cli, cmd),
         Command::LoadBalancer(cmd) => load_balancer(cli, cmd),
         Command::Image(cmd) => image(cli, cmd),
