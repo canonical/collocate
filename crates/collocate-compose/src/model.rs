@@ -138,6 +138,8 @@ pub struct Service {
     #[serde(default)]
     pub image: Option<String>,
     #[serde(default)]
+    pub pull_policy: Option<String>,
+    #[serde(default)]
     pub series: Option<String>,
     #[serde(default)]
     pub persistent: bool,
@@ -200,6 +202,7 @@ impl Default for Service {
         Service {
             node: None,
             image: None,
+            pull_policy: None,
             series: None,
             persistent: false,
             cpus: None,
@@ -358,6 +361,12 @@ impl ComposeFile {
             }
             if let Some(series) = &s.series {
                 collocate_core::spec::Series::parse(series)?;
+            }
+            if let Some(p) = &s.pull_policy {
+                if s.image.is_none() {
+                    return invalid(format!("service {name}: pull_policy only applies to image services"));
+                }
+                collocate_image::pull::PullPolicy::parse(p)?;
             }
             if s.replicas == 0 {
                 return invalid(format!("service {name}: replicas must be at least 1"));

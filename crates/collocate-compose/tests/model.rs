@@ -130,3 +130,13 @@ fn bad_field_values_are_rejected() {
     let y = MINI.replace("    command", "    volume: relative:/x\n    volume2: 1\n    command");
     assert!(ComposeFile::parse(&y).is_err());
 }
+
+#[test]
+fn pull_policy_is_validated_and_only_applies_to_images() {
+    let img = "version: 1\nproject: p\nservices:\n  a:\n    image: redis:7\n";
+    for ok in ["missing", "always", "never"] {
+        assert!(load(&format!("{img}    pull_policy: {ok}\n")).is_ok(), "{ok}");
+    }
+    assert!(load(&format!("{img}    pull_policy: daily\n")).is_err());
+    assert!(load(&format!("{MINI}    pull_policy: always\n")).is_err());
+}
