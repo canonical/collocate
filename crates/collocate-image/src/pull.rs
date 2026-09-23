@@ -5,8 +5,29 @@ use crate::oci::layer_compression;
 use collocate_core::{Error, Result};
 use collocate_registry::auth::Credentials;
 use collocate_registry::{Client, Reference, Selector};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PullPolicy {
+    #[default]
+    Missing,
+    Always,
+    Never,
+}
+
+impl PullPolicy {
+    pub fn parse(s: &str) -> Result<PullPolicy> {
+        match s {
+            "missing" => Ok(PullPolicy::Missing),
+            "always" => Ok(PullPolicy::Always),
+            "never" => Ok(PullPolicy::Never),
+            other => Err(Error::InvalidSpec(format!("invalid pull policy {other:?}, expected missing, always or never"))),
+        }
+    }
+}
 
 pub fn reference_name(reference: &Reference) -> String {
     let selector = match &reference.selector {
@@ -71,10 +92,16 @@ pub fn pull_and_import(reference: &Reference, root: &Path, creds: &dyn Credentia
     result
 }
 
-pub fn ensure_pulled(reference: &Reference, root: &Path, creds: &dyn Credentials) -> Result<ImageMeta> {
+pub fn ensure_pulled(reference: &Reference, root: &Path, creds: &dyn Credentials, policy: PullPolicy) -> Result<ImageMeta> {
     let store = ImageStore::new(root);
-    match store.get(&reference_name(reference)) {
-        Err(Error::NotFound(_)) => pull_and_import(reference, root, creds),
-        other => other,
+    let name = reference_name(reference);
+    match policy {
+        PullPolicy::Always => pull_and_import(reference, root, creds),
+        PullPolicy::Missing => match store.get(&name) {
+            Ok(meta) => Ok(meta),
+            Err(Error::NotFound(_)) => pull_and_import(reference, root, creds),
+            Err(e) => Err(e),
+        },
+        PullPolicy::Never => store.get(&name).map_err(|_| Error::NotFound(format!("image {name} is not present locally and the pull policy is never"))),
     }
 }

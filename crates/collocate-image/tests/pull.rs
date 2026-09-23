@@ -2,7 +2,7 @@ mod common;
 
 use collocate_image::config::ImageStore;
 use collocate_core::spec::ImageKind;
-use collocate_image::pull::{ensure_pulled, pull_and_import, reference_name};
+use collocate_image::pull::{ensure_pulled, pull_and_import, reference_name, PullPolicy};
 use collocate_registry::auth::Anonymous;
 use collocate_registry::manifest::{host_arch, OCI_MANIFEST};
 use collocate_registry::Reference;
@@ -81,14 +81,32 @@ fn ensure_pulled_skips_network_when_already_local() {
     let dir = tempfile::tempdir().unwrap();
     let reference = Reference { registry: server.addr.clone(), repository: "testrepo".to_string(), selector: collocate_registry::Selector::Tag("latest".to_string()) };
 
-    ensure_pulled(&reference, dir.path(), &Anonymous).unwrap();
+    ensure_pulled(&reference, dir.path(), &Anonymous, PullPolicy::Missing).unwrap();
 
-    let meta = ensure_pulled(&reference, dir.path(), &Anonymous).unwrap();
+    let meta = ensure_pulled(&reference, dir.path(), &Anonymous, PullPolicy::Missing).unwrap();
     assert_eq!(meta.config.cmd, vec!["/bin/app"]);
 }
 
 fn local_ref(server: &FakeRegistry) -> Reference {
     Reference { registry: server.addr.clone(), repository: "testrepo".to_string(), selector: collocate_registry::Selector::Tag("latest".to_string()) }
+}
+
+#[test]
+fn always_re_resolves_but_skips_blobs_when_the_digest_is_unchanged() {
+    let (server, ..) = start_registry_bounded(4);
+    let dir = tempfile::tempdir().unwrap();
+    let reference = local_ref(&server);
+    let first = ensure_pulled(&reference, dir.path(), &Anonymous, PullPolicy::Always).unwrap();
+    let second = ensure_pulled(&reference, dir.path(), &Anonymous, PullPolicy::Always).unwrap();
+    assert_eq!(first, second);
+}
+
+#[test]
+fn never_refuses_to_touch_the_network() {
+    let (server, ..) = start_registry_bounded(0);
+    let dir = tempfile::tempdir().unwrap();
+    let err = ensure_pulled(&local_ref(&server), dir.path(), &Anonymous, PullPolicy::Never).unwrap_err();
+    assert!(err.to_string().contains("pull policy is never"), "{err}");
 }
 
 #[test]
@@ -120,4 +138,12 @@ fn reference_names_are_short_for_docker_hub() {
     assert_eq!(reference_name(&Reference::parse("docker.io/ubuntu/nginx:1.24").unwrap()), "ubuntu/nginx:1.24");
     assert_eq!(reference_name(&Reference::parse("ghcr.io/canonical/charmed-postgresql:14").unwrap()), "ghcr.io/canonical/charmed-postgresql:14");
     assert_eq!(reference_name(&Reference::parse("ghcr.io/a/b@sha256:abc").unwrap()), "ghcr.io/a/b@sha256:abc");
+}
+
+#[test]
+fn pull_policies_parse() {
+    assert_eq!(PullPolicy::parse("missing").unwrap(), PullPolicy::Missing);
+    assert_eq!(PullPolicy::parse("always").unwrap(), PullPolicy::Always);
+    assert_eq!(PullPolicy::parse("never").unwrap(), PullPolicy::Never);
+    assert!(PullPolicy::parse("sometimes").is_err());
 }
