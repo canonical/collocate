@@ -1,5 +1,5 @@
 use collocate_core::spec::{Mount, RootSource, Series, Spec};
-use collocate_runtime::env::build_env;
+use collocate_runtime::env::{build_env, with_home};
 use collocate_runtime::mountplan::{mount_plan, Extras, MountOp};
 use collocate_runtime::overlay::OverlayPlan;
 use collocate_runtime::user::resolve_user;
@@ -138,7 +138,7 @@ fn env_has_defaults_and_spec_values_win() {
     let env = build_env(&s);
     assert!(env.contains(&"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string()));
     assert!(env.contains(&"HOSTNAME=web".to_string()));
-    assert!(env.contains(&"HOME=/root".to_string()));
+    assert!(!env.iter().any(|e| e.starts_with("HOME=")));
     s.process.env.push(("PATH".into(), "/custom".into()));
     s.process.env.push(("FOO".into(), "bar".into()));
     let env = build_env(&s);
@@ -176,6 +176,23 @@ fn supplementary_groups_come_from_the_group_file() {
 fn numeric_uids_without_passwd_entries_default_to_gid_zero() {
     let r = resolve_user("4242", PASSWD, GROUP).unwrap();
     assert_eq!((r.uid, r.gid), (4242, 0));
+}
+
+#[test]
+fn home_comes_from_the_passwd_entry() {
+    assert_eq!(resolve_user("app", PASSWD, GROUP).unwrap().home.as_deref(), Some("/home/app"));
+    assert_eq!(resolve_user("0", PASSWD, GROUP).unwrap().home.as_deref(), Some("/root"));
+    assert_eq!(resolve_user("4242", PASSWD, GROUP).unwrap().home, None);
+}
+
+#[test]
+fn home_defaults_to_root_only_when_unset() {
+    let c = |s: &str| std::ffi::CString::new(s).unwrap();
+    let base = vec![c("PATH=/bin")];
+    assert!(with_home(&base, Some("/home/app")).contains(&c("HOME=/home/app")));
+    assert!(with_home(&base, None).contains(&c("HOME=/root")));
+    let explicit = vec![c("HOME=/srv")];
+    assert_eq!(with_home(&explicit, Some("/home/app")), explicit);
 }
 
 #[test]

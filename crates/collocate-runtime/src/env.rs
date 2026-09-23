@@ -1,4 +1,5 @@
 use collocate_core::spec::Spec;
+use std::ffi::CString;
 
 const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -11,10 +12,17 @@ pub fn build_env(spec: &Spec) -> Vec<String> {
     if !has(&env, "HOSTNAME") {
         env.push(format!("HOSTNAME={}", spec.hostname));
     }
-    if !has(&env, "HOME") {
-        env.push("HOME=/root".to_string());
-    }
     env
+}
+
+pub fn with_home(envp: &[CString], home: Option<&str>) -> Vec<CString> {
+    let mut out = envp.to_vec();
+    if !out.iter().any(|e| e.as_bytes().starts_with(b"HOME=")) {
+        if let Ok(entry) = CString::new(format!("HOME={}", home.unwrap_or("/root"))) {
+            out.push(entry);
+        }
+    }
+    out
 }
 
 pub fn merge_env(mut base: Vec<String>, overrides: &[(String, String)]) -> Vec<String> {

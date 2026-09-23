@@ -5,12 +5,14 @@ pub struct Ids {
     pub uid: u32,
     pub gid: u32,
     pub groups: Vec<u32>,
+    pub home: Option<String>,
 }
 
 struct PasswdEntry {
     name: String,
     uid: u32,
     gid: u32,
+    home: String,
 }
 
 struct GroupEntry {
@@ -23,7 +25,12 @@ fn parse_passwd(text: &str) -> Vec<PasswdEntry> {
     text.lines()
         .filter_map(|l| {
             let f: Vec<&str> = l.split(':').collect();
-            Some(PasswdEntry { name: f.first()?.to_string(), uid: f.get(2)?.parse().ok()?, gid: f.get(3)?.parse().ok()? })
+            Some(PasswdEntry {
+                name: f.first()?.to_string(),
+                uid: f.get(2)?.parse().ok()?,
+                gid: f.get(3)?.parse().ok()?,
+                home: f.get(5).map(|h| h.to_string()).unwrap_or_default(),
+            })
         })
         .collect()
 }
@@ -51,11 +58,12 @@ pub fn resolve_user(user: &str, passwd: &str, group: &str) -> Result<Ids> {
         Some((u, g)) => (u, Some(g)),
         None => (user, None),
     };
+    let known = |p: &PasswdEntry| (p.name.clone(), p.uid, p.gid, Some(p.home.clone()).filter(|h| !h.is_empty()));
     let entry = match uname.parse::<u32>() {
-        Ok(uid) => users.iter().find(|p| p.uid == uid).map(|p| (p.name.clone(), p.uid, p.gid)).or(Some((String::new(), uid, 0))),
-        Err(_) => users.iter().find(|p| p.name == uname).map(|p| (p.name.clone(), p.uid, p.gid)),
+        Ok(uid) => users.iter().find(|p| p.uid == uid).map(known).or(Some((String::new(), uid, 0, None))),
+        Err(_) => users.iter().find(|p| p.name == uname).map(known),
     };
-    let (name, uid, default_gid) = entry.ok_or_else(|| Error::Invalid(format!("unknown user {uname}")))?;
+    let (name, uid, default_gid, home) = entry.ok_or_else(|| Error::Invalid(format!("unknown user {uname}")))?;
     let gid = match gname {
         None => default_gid,
         Some(g) => match g.parse::<u32>() {
@@ -68,5 +76,5 @@ pub fn resolve_user(user: &str, passwd: &str, group: &str) -> Result<Ids> {
     supplementary.push(gid);
     supplementary.sort_unstable();
     supplementary.dedup();
-    Ok(Ids { uid, gid, groups: supplementary })
+    Ok(Ids { uid, gid, groups: supplementary, home })
 }

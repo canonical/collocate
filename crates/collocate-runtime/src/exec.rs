@@ -134,7 +134,8 @@ fn worker(p: &Prepared) -> ! {
 
     let mut argv: Vec<*const libc::c_char> = p.argv.iter().map(|a| a.as_ptr()).collect();
     argv.push(std::ptr::null());
-    let mut envp: Vec<*const libc::c_char> = p.envp.iter().map(|e| e.as_ptr()).collect();
+    let env = crate::env::with_home(&p.envp, ids.home.as_deref());
+    let mut envp: Vec<*const libc::c_char> = env.iter().map(|e| e.as_ptr()).collect();
     envp.push(std::ptr::null());
     let name = p.argv[0].to_string_lossy().into_owned();
     if name.contains('/') {

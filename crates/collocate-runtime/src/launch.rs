@@ -391,7 +391,8 @@ fn child_run(p: &Prepared, sock: &OwnedFd, log: &File) -> std::result::Result<In
     misc::reset_signal_state();
     let mut argv: Vec<*const libc::c_char> = p.argv.iter().map(|a| a.as_ptr()).collect();
     argv.push(std::ptr::null());
-    let mut envp: Vec<*const libc::c_char> = p.envp.iter().map(|e| e.as_ptr()).collect();
+    let env = crate::env::with_home(&p.envp, ids.home.as_deref());
+    let mut envp: Vec<*const libc::c_char> = env.iter().map(|e| e.as_ptr()).collect();
     envp.push(std::ptr::null());
     unsafe { libc::execve(p.argv[0].as_ptr(), argv.as_ptr(), envp.as_ptr()) };
     Err(format!("exec: {}", std::io::Error::last_os_error()))
