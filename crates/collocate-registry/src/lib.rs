@@ -1,4 +1,5 @@
 pub mod error;
+pub mod manifest;
 pub mod reference;
 
 pub use error::{Error, Result};
