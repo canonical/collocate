@@ -1,0 +1,10 @@
+[package]
+name = "collocate-net"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+collocate-core.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
