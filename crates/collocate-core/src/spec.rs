@@ -47,6 +47,27 @@ pub enum RootSource {
     Oci { digest: String, layers: Vec<String> },
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageKind {
+    #[default]
+    Oci,
+    Pebble,
+}
+
+impl ImageKind {
+    pub fn is_oci(&self) -> bool {
+        *self == ImageKind::Oci
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ImageKind::Oci => "oci",
+            ImageKind::Pebble => "rock",
+        }
+    }
+}
+
 fn default_user() -> String {
     "0".into()
 }
@@ -185,6 +206,8 @@ pub struct Spec {
     pub id: ContainerId,
     pub name: String,
     pub root: RootSource,
+    #[serde(default, skip_serializing_if = "ImageKind::is_oci")]
+    pub image_kind: ImageKind,
     #[serde(default)]
     pub persistent: bool,
     #[serde(default)]
@@ -231,6 +254,7 @@ impl Spec {
             id: ContainerId::random().unwrap_or_else(|_| ContainerId::from_bytes([0; 6])),
             name: name.to_string(),
             root,
+            image_kind: ImageKind::Oci,
             persistent: false,
             idle_timeout_secs: None,
             process: Process {
