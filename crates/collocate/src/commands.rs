@@ -10,7 +10,7 @@ use collocate_compose::up::{down, plan_only, up, UpOptions};
 use collocate_core::client::Client;
 use collocate_core::net::{Algorithm, NoBackends, Proto};
 use collocate_core::request::{ContainerInfo, LbSpec, LbStatus, Request, Response, State};
-use collocate_core::spec::Series;
+use collocate_core::spec::{ImageKind, Series};
 use collocate_core::{Error, Result};
 use collocate_image::config::ImageMeta;
 use collocate_image::pull::PullPolicy;
@@ -169,8 +169,12 @@ const STATUS_HEADERS: [&str; 9] = ["NAME", "PROJECT", "SERIES", "STATE", "PROCES
 
 fn describe_image(m: &ImageMeta) -> String {
     format!(
-        "name: {}\ndigest: {}\nlayers: {}\nentrypoint: {:?}\ncmd: {:?}\nuser: {}\nworkdir: {}",
+        "name: {}\nkind: {}\ndigest: {}\nlayers: {}\nentrypoint: {:?}\ncmd: {:?}\nuser: {}\nworkdir: {}",
         m.name,
+        match m.kind {
+            ImageKind::Pebble => "rock (pebble)",
+            ImageKind::Oci => "oci",
+        },
         m.digest,
         m.layers.len(),
         m.config.entrypoint,
@@ -721,9 +725,11 @@ fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
             } else if list.is_empty() {
                 print!("{}", empty_state("No images found."));
             } else {
-                let rows: Vec<Vec<String>> =
-                    list.iter().map(|m| vec![m.name.clone(), m.layers.len().to_string(), m.digest.clone()]).collect();
-                print!("{}", render_with(&["IMAGE", "LAYERS", "DIGEST"], &rows, &table_opts(&[], false, false)));
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|m| vec![m.name.clone(), m.kind.label().to_string(), m.layers.len().to_string(), m.digest.clone()])
+                    .collect();
+                print!("{}", render_with(&["IMAGE", "KIND", "LAYERS", "DIGEST"], &rows, &table_opts(&[], false, false)));
             }
             Ok(0)
         }
