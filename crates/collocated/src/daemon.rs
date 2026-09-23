@@ -4,7 +4,7 @@ use crate::restart::{restart_delay, should_restart};
 use crate::secrets::SecretStore;
 use collocate_core::id::resolve_ref;
 use collocate_core::request::{ContainerInfo, ContainerStats, HealthState, LbSpec, LbStatus, LogSource, Request, Response, State};
-use collocate_core::spec::{HealthKind, ImageKind, Mount, RootSource, Spec};
+use collocate_core::spec::{HealthKind, ImageKind, Mount, RootSource, Spec, PEBBLE_BIN};
 use collocate_core::wire::MAX_FRAME;
 use collocate_core::{ContainerId, Error, Result};
 use collocate_net::files::{parse_nameservers, render_hosts, render_resolv};
@@ -92,6 +92,7 @@ struct ExecArgs {
     user: Option<String>,
     workdir: Option<String>,
     timeout_secs: Option<u64>,
+    service: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -899,8 +900,8 @@ impl Daemon {
                 let spec = self.store.get(&id)?;
                 self.op_logs(&spec, tail, offset, source, &services).map(Some)
             }
-            Request::Exec { target, argv, env, user, workdir, tty: _, timeout_secs } => {
-                self.op_exec(conn, ExecArgs { target, argv, env, user, workdir, timeout_secs })
+            Request::Exec { target, argv, env, user, workdir, tty: _, timeout_secs, service } => {
+                self.op_exec(conn, ExecArgs { target, argv, env, user, workdir, timeout_secs, service })
             }
             Request::ExecProbe { target, argv, timeout_secs } => self.op_exec_probe(conn, &target, argv, timeout_secs),
             Request::Commit { target, image } => self.op_commit(&target, &image).map(|digest| Some(Response::Text { text: digest })),
@@ -1116,7 +1117,31 @@ impl Daemon {
         Ok(Response::Log { data, next_offset: next, source: LogSource::Pebble })
     }
 
-    fn op_exec(&mut self, conn: u64, args: ExecArgs) -> Result<Option<Response>> {
+    fn pebble_exec_argv(spec: &Spec, args: &mut ExecArgs) -> Result<()> {
+        let Some(service) = args.service.take() else { return Ok(()) };
+        if spec.image_kind != ImageKind::Pebble {
+            return Err(Error::Invalid(format!("{} is not a rock; --service needs a Pebble container", args.target)));
+        }
+        let mut argv = vec![PEBBLE_BIN.to_string(), "exec".to_string(), format!("--context={service}")];
+        if let Some(w) = args.workdir.take() {
+            argv.push(format!("-w={w}"));
+        }
+        if let Some(u) = args.user.take() {
+            argv.push(if u.parse::<u32>().is_ok() { format!("--uid={u}") } else { format!("--user={u}") });
+        }
+        for (k, v) in args.env.drain(..) {
+            argv.push(format!("--env={k}={v}"));
+        }
+        if let Some(t) = args.timeout_secs {
+            argv.push(format!("--timeout={t}s"));
+        }
+        argv.push("--".to_string());
+        argv.append(&mut args.argv);
+        args.argv = argv;
+        Ok(())
+    }
+
+    fn op_exec(&mut self, conn: u64, mut args: ExecArgs) -> Result<Option<Response>> {
         let id = self.resolve(&args.target)?;
         let fds: Vec<OwnedFd> = {
             let c = self.conns.get_mut(&conn).ok_or_else(|| Error::Internal("connection vanished".into()))?;
@@ -1126,6 +1151,7 @@ impl Daemon {
             c.fds.drain(..3).collect()
         };
         let live = self.live.get(&id).ok_or_else(|| Error::Conflict(format!("{} is not running", args.target)))?;
+        Self::pebble_exec_argv(&live.spec, &mut args)?;
         let req = ExecRequest {
             init_pid: live.pid,
             init_pidfd: live.pidfd.as_raw_fd(),

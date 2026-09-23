@@ -321,6 +321,8 @@ pub enum Command {
         workdir: Option<String>,
         #[arg(long)]
         timeout: Option<u64>,
+        #[arg(short = 's', long)]
+        service: Option<String>,
         target: String,
         #[arg(last = true, required = true)]
         command: Vec<String>,

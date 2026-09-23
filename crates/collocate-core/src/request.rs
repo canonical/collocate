@@ -131,6 +131,8 @@ pub enum Request {
         workdir: Option<String>,
         tty: bool,
         timeout_secs: Option<u64>,
+        #[serde(default)]
+        service: Option<String>,
     },
     ExecProbe {
         target: String,

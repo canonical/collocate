@@ -68,6 +68,7 @@ impl ImageKind {
     }
 }
 
+pub const PEBBLE_BIN: &str = "pebble";
 pub const PEBBLE_DEFAULT_DIR: &str = "/var/lib/pebble/default";
 
 fn default_user() -> String {

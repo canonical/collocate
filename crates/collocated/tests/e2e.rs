@@ -457,6 +457,7 @@ fn exec_runs_inside_a_running_container() {
         workdir: None,
         tty: false,
         timeout_secs: None,
+        service: None,
     };
     c.send_with_fds(&req, &[&null, &out, &out]).unwrap();
     match c.read_response().unwrap() {
@@ -482,6 +483,7 @@ fn exec_is_killed_when_it_exceeds_its_timeout() {
         workdir: None,
         tty: false,
         timeout_secs: Some(1),
+        service: None,
     };
     c.send_with_fds(&req, &[&null, &null, &null]).unwrap();
     let start = Instant::now();
@@ -507,6 +509,7 @@ fn exec_without_a_timeout_can_run_longer_than_a_typical_timeout() {
         workdir: None,
         tty: false,
         timeout_secs: None,
+        service: None,
     };
     c.send_with_fds(&req, &[&null, &null, &null]).unwrap();
     match c.read_response().unwrap() {
@@ -569,6 +572,7 @@ fn exec_activity_resets_the_idle_timer() {
         workdir: None,
         tty: false,
         timeout_secs: None,
+        service: None,
     };
     let mut c = env.client();
     c.send_with_fds(&req, &[&null, &null, &null]).unwrap();
