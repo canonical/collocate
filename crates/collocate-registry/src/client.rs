@@ -97,6 +97,11 @@ impl Client {
         }
 
         let digest = digest_of(&bytes);
+        if let Selector::Digest(expected) = selector {
+            if *expected != digest {
+                return Err(Error::DigestMismatch { expected: expected.clone(), actual: digest });
+            }
+        }
         let manifest: Manifest = serde_json::from_slice(&bytes)?;
         Ok((digest, manifest))
     }
@@ -106,8 +111,12 @@ impl Client {
         let resp = self.request("GET", &url, Some(ACCEPT_MANIFEST_TYPES), creds)?;
         let mut bytes = Vec::new();
         resp.into_reader().read_to_end(&mut bytes)?;
+        let actual = digest_of(&bytes);
+        if actual != digest {
+            return Err(Error::DigestMismatch { expected: digest.to_string(), actual });
+        }
         let manifest: Manifest = serde_json::from_slice(&bytes)?;
-        Ok((digest.to_string(), manifest))
+        Ok((actual, manifest))
     }
 
     pub fn get_blob(&self, repo: &str, digest: &str, out: &mut dyn Write, creds: &dyn Credentials) -> Result<()> {
