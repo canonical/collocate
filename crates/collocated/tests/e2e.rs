@@ -390,6 +390,54 @@ fn exec_runs_inside_a_running_container() {
 }
 
 #[test]
+fn exec_is_killed_when_it_exceeds_its_timeout() {
+    need_root!();
+    let env = Env::start();
+    env.run(env.spec("target", "sleep 30"));
+    let null = fs::File::open("/dev/null").unwrap();
+    let mut c = env.client();
+    let req = Request::Exec {
+        target: "target".into(),
+        argv: vec!["/bin/sh".into(), "-c".into(), "trap '' TERM; sleep 30".into()],
+        env: vec![],
+        user: None,
+        workdir: None,
+        tty: false,
+        timeout_secs: Some(1),
+    };
+    c.send_with_fds(&req, &[&null, &null, &null]).unwrap();
+    let start = Instant::now();
+    match c.read_response().unwrap() {
+        Response::Exit { status } => assert_ne!(status, 0),
+        other => panic!("{other:?}"),
+    }
+    assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
+}
+
+#[test]
+fn exec_without_a_timeout_can_run_longer_than_a_typical_timeout() {
+    need_root!();
+    let env = Env::start();
+    env.run(env.spec("target", "sleep 30"));
+    let null = fs::File::open("/dev/null").unwrap();
+    let mut c = env.client();
+    let req = Request::Exec {
+        target: "target".into(),
+        argv: vec!["/bin/sh".into(), "-c".into(), "sleep 1; exit 7".into()],
+        env: vec![],
+        user: None,
+        workdir: None,
+        tty: false,
+        timeout_secs: None,
+    };
+    c.send_with_fds(&req, &[&null, &null, &null]).unwrap();
+    match c.read_response().unwrap() {
+        Response::Exit { status } => assert_eq!(status, 7),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn secrets_are_generated_once_and_mounted_read_only() {
     need_root!();
     let env = Env::start();
