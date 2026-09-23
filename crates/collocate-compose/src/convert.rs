@@ -162,6 +162,12 @@ fn convert_service(name: &str, raw: &Value, base: &Path, report: &mut Report, he
     for (key, val) in obj {
         match key.as_str() {
             "image" => svc.image = scalar(val),
+            "pull_policy" => match scalar(val).as_deref() {
+                Some(p @ ("always" | "never" | "missing")) => svc.pull_policy = Some(p.to_string()),
+                Some("if_not_present") => svc.pull_policy = Some("missing".into()),
+                Some(other) => report.approximated.push(format!("{name}: pull_policy {other} mapped to missing")),
+                None => {}
+            },
             "command" => svc.command = string_list(val),
             "entrypoint" => svc.entrypoint = string_list(val),
             "environment" => match val {

@@ -123,3 +123,13 @@ fn list_form_commands_and_string_commands_are_supported() {
     assert_eq!(a.entrypoint, vec!["/bin/sh", "-c"]);
     assert_eq!(a.publish, vec!["8080:80/udp"]);
 }
+
+#[test]
+fn pull_policy_maps_known_values_and_approximates_the_rest() {
+    let y = "services:\n  a:\n    image: redis\n    pull_policy: if_not_present\n  b:\n    image: redis\n    pull_policy: always\n  c:\n    image: redis\n    pull_policy: daily\n";
+    let c = convert_docker_compose(y, "p", Path::new("/srv")).unwrap();
+    assert_eq!(c.file.services["a"].pull_policy.as_deref(), Some("missing"));
+    assert_eq!(c.file.services["b"].pull_policy.as_deref(), Some("always"));
+    assert_eq!(c.file.services["c"].pull_policy, None);
+    assert!(c.report.approximated.iter().any(|m| m.contains("pull_policy daily")));
+}
