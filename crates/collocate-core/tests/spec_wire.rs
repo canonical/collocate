@@ -157,6 +157,7 @@ fn responses_roundtrip_including_errors() {
         revision: Some("abc123".into()),
         series: Some("24.04".into()),
         published: vec!["8080:80/tcp".into()],
+        image_kind: None,
     };
     for r in [Response::Containers(vec![info]), Response::error(&Error::NotFound("x".into()))] {
         let mut buf = Vec::new();

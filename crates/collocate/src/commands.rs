@@ -151,7 +151,7 @@ fn status_rows(cli: &Cli, target: Option<&str>) -> Result<Vec<Vec<String>>> {
         rows.push(vec![
             c.name.clone(),
             c.project.clone().unwrap_or_else(|| "—".into()),
-            c.series.clone().unwrap_or_else(|| "—".into()),
+            c.series.clone().or_else(|| c.image_kind.map(|k| k.label().to_string())).unwrap_or_else(|| "—".into()),
             state_word(c.state).to_string(),
             if c.state == State::Running { format_process(&procs) } else { "—".into() },
             if c.state == State::Running { format_ports(&tcp, &udp) } else { "—".into() },

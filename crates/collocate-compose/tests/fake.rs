@@ -41,6 +41,7 @@ impl FakeDaemon {
             revision: spec.labels.revision.clone(),
             series: None,
             published: vec![],
+            image_kind: None,
         }
     }
 }

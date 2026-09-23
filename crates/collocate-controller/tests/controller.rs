@@ -105,6 +105,7 @@ impl Api for Sim {
                         revision: c.spec.labels.revision.clone(),
                         series: None,
                         published: vec![],
+                        image_kind: None,
                     })
                     .collect();
                 Ok(Response::Containers(list))

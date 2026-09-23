@@ -34,6 +34,7 @@ fn info(name: &str) -> ContainerInfo {
         revision: None,
         series: None,
         published: vec![],
+        image_kind: None,
     }
 }
 

@@ -833,6 +833,10 @@ impl Daemon {
                 RootSource::Oci { .. } => None,
             },
             published: spec.net.publish.iter().map(ToString::to_string).collect(),
+            image_kind: match &spec.root {
+                RootSource::Base { .. } => None,
+                RootSource::Oci { .. } => Some(spec.image_kind),
+            },
         }
     }
 

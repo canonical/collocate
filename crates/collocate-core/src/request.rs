@@ -1,6 +1,6 @@
 use crate::id::ContainerId;
 use crate::net::{Algorithm, NoBackends, Proto};
-use crate::spec::Spec;
+use crate::spec::{ImageKind, Spec};
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
@@ -27,6 +27,8 @@ pub struct ContainerInfo {
     pub revision: Option<String>,
     pub series: Option<String>,
     pub published: Vec<String>,
+    #[serde(default)]
+    pub image_kind: Option<ImageKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
