@@ -378,6 +378,7 @@ pub fn run(cli: &Cli) -> Result<i32> {
                 other => Err(Error::Internal(format!("unexpected response {other:?}"))),
             }
         }
+        Command::Cp { src, dst } => cp(cli, src, dst),
         Command::Secret(cmd) => secret(cli, cmd),
         Command::LoadBalancer(cmd) => load_balancer(cli, cmd),
         Command::Image(cmd) => image(cli, cmd),
@@ -544,6 +545,50 @@ fn secret(cli: &Cli, cmd: &SecretCmd) -> Result<i32> {
             }
             Ok(0)
         }
+    }
+}
+
+enum CpEndpoint {
+    Local(PathBuf),
+    Remote { target: String, path: String },
+}
+
+fn parse_cp_endpoint(s: &str) -> CpEndpoint {
+    match s.split_once(':') {
+        Some((target, path)) if !target.is_empty() && !path.is_empty() => {
+            CpEndpoint::Remote { target: target.to_string(), path: path.to_string() }
+        }
+        _ => CpEndpoint::Local(PathBuf::from(s)),
+    }
+}
+
+fn cp_exec(cli: &Cli, target: &str, argv: Vec<String>, stdin: &std::fs::File, stdout: &std::fs::File) -> Result<i32> {
+    let mut c = connect(cli)?;
+    let req = Request::Exec { target: target.to_string(), argv, env: vec![], user: None, workdir: None, tty: false };
+    let stderr = std::fs::File::open("/dev/null")?;
+    c.send_with_fds(&req, &[&stdin.as_raw_fd(), &stdout.as_raw_fd(), &stderr.as_raw_fd()])?;
+    match c.read_response()? {
+        Response::Exit { status } => Ok(status),
+        other => Err(Error::Internal(format!("unexpected response {other:?}"))),
+    }
+}
+
+fn cp(cli: &Cli, src: &str, dst: &str) -> Result<i32> {
+    match (parse_cp_endpoint(src), parse_cp_endpoint(dst)) {
+        (CpEndpoint::Remote { target, path }, CpEndpoint::Local(local)) => {
+            let stdin = std::fs::File::open("/dev/null")?;
+            let stdout = std::fs::File::create(&local)?;
+            cp_exec(cli, &target, vec!["cat".into(), path], &stdin, &stdout)
+        }
+        (CpEndpoint::Local(local), CpEndpoint::Remote { target, path }) => {
+            let stdin = std::fs::File::open(&local)?;
+            let stdout = std::fs::File::open("/dev/null")?;
+            cp_exec(cli, &target, vec!["tee".into(), path], &stdin, &stdout)
+        }
+        (CpEndpoint::Local(_), CpEndpoint::Local(_)) => {
+            Err(Error::Invalid("cp needs one side to reference a container as name:path".into()))
+        }
+        (CpEndpoint::Remote { .. }, CpEndpoint::Remote { .. }) => Err(Error::Invalid("cp cannot copy between two containers".into())),
     }
 }
 
