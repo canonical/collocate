@@ -1,0 +1,39 @@
+[package]
+name = "collocate-controller"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Autoscaling and rolling updates for collocate compose deployments."
+
+[[bin]]
+name = "collocate-controller"
+path = "src/main.rs"
+
+[lib]
+name = "collocate_controller"
+path = "src/lib.rs"
+
+[dependencies]
+collocate-core.workspace = true
+collocate-compose.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+collocated = { path = "../collocated" }
+collocate-sys.workspace = true
+libc.workspace = true
+tempfile.workspace = true
+
+[package.metadata.deb]
+name = "collocate-controller"
+maintainer = "collocate maintainers"
+depends = "collocated"
+section = "admin"
+priority = "optional"
+extended-description = "Autoscaling, rolling updates and self-healing for collocate compose deployments."
+assets = [
+    ["target/release/collocate-controller", "usr/bin/collocate-controller", "755"],
+    ["../../packaging/collocate-controller.service", "lib/systemd/system/collocate-controller.service", "644"],
+]
