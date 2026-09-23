@@ -503,17 +503,22 @@ impl Daemon {
         io(f.write_all(content))
     }
 
+    fn upper_and_work_dirs(&self, id: &ContainerId, spec: &Spec) -> (PathBuf, PathBuf) {
+        if spec.persistent {
+            let cdir = self.store.persistent_dir(id);
+            (cdir.join("upper"), cdir.join("work"))
+        } else {
+            let e = self.cfg.run_dir.join("eph").join(id.to_string());
+            (e.join("upper"), e.join("work"))
+        }
+    }
+
     fn launch(&mut self, mut spec: Spec) -> Result<()> {
         let id = spec.id;
         let mut lowers = self.lowers(&spec.root)?;
         let cdir = if spec.persistent { self.store.persistent_dir(&id) } else { self.store.runtime_dir(&id) };
         io(fs::create_dir_all(&cdir))?;
-        let (upper, work) = if spec.persistent {
-            (cdir.join("upper"), cdir.join("work"))
-        } else {
-            let e = self.cfg.run_dir.join("eph").join(id.to_string());
-            (e.join("upper"), e.join("work"))
-        };
+        let (upper, work) = self.upper_and_work_dirs(&id, &spec);
         let staging = self.cfg.run_dir.join("roots").join(id.to_string());
         let files = self.cfg.run_dir.join("hosts").join(id.to_string());
         let secrets_dir = self.cfg.run_dir.join("secrets").join(id.to_string());
@@ -679,6 +684,30 @@ impl Daemon {
             self.reap_blocking(id);
         }
         let _ = self.purge(&id);
+    }
+
+    fn op_commit(&mut self, target: &str, image: &str) -> Result<String> {
+        let id = self.resolve(target)?;
+        let spec = self.store.get(&id)?;
+        let RootSource::Oci { digest, layers } = &spec.root else {
+            return Err(Error::Invalid("only containers started from an image (run --image) can be committed".into()));
+        };
+        if self.root_mode == RootMode::BindRo {
+            return Err(Error::Invalid("this host has no writable layer to commit (root_mode is bind-ro)".into()));
+        }
+        let (upper, _work) = self.upper_and_work_dirs(&id, &spec);
+        if !upper.is_dir() {
+            return Err(Error::NotFound(format!("no writable layer found for {target}")));
+        }
+        let store = collocate_image::config::ImageStore::new(&self.cfg.state_dir);
+        let diff_id = collocate_image::commit::commit_upper_to_store(&upper, &store)?;
+        let config = store.list()?.into_iter().find(|m| &m.digest == digest).map(|m| m.config).unwrap_or_default();
+        let mut new_layers = layers.clone();
+        new_layers.push(diff_id);
+        let meta_digest = collocate_image::commit::synthetic_digest(&new_layers, &config)?;
+        let meta = collocate_image::config::ImageMeta { name: image.to_string(), digest: meta_digest.clone(), layers: new_layers, config };
+        store.put(&meta)?;
+        Ok(meta_digest)
     }
 
     fn purge(&mut self, id: &ContainerId) -> Result<()> {
@@ -888,6 +917,7 @@ impl Daemon {
                 self.op_exec(conn, ExecArgs { target, argv, env, user, workdir, timeout_secs })
             }
             Request::ExecProbe { target, argv, timeout_secs } => self.op_exec_probe(conn, &target, argv, timeout_secs),
+            Request::Commit { target, image } => self.op_commit(&target, &image).map(|digest| Some(Response::Text { text: digest })),
             Request::Ps { all, project } => {
                 let list = self
                     .store

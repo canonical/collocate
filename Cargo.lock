@@ -294,6 +294,7 @@ name = "collocated"
 version = "0.1.0"
 dependencies = [
  "collocate-core",
+ "collocate-image",
  "collocate-net",
  "collocate-runtime",
  "collocate-store",

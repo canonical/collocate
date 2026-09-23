@@ -110,6 +110,10 @@ pub enum Request {
         argv: Vec<String>,
         timeout_secs: u64,
     },
+    Commit {
+        target: String,
+        image: String,
+    },
     Ps {
         all: bool,
         project: Option<String>,
