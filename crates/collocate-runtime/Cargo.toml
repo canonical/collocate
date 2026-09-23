@@ -1,0 +1,13 @@
+[package]
+name = "collocate-runtime"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+collocate-core.workspace = true
+collocate-sys.workspace = true
+collocate-net.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
