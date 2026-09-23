@@ -243,7 +243,9 @@ pub fn run(cli: &Cli) -> Result<i32> {
     match &cli.command {
         Command::Run(a) => {
             let store = collocate_image::config::ImageStore::new(&cli.state_dir);
-            let spec = build_spec(a, host_series(), &|k| std::env::var(k).ok(), &|p| Ok(std::fs::read_to_string(p)?), &|n| store.get(n))?;
+            let spec = build_spec(a, host_series(), &|k| std::env::var(k).ok(), &|p| Ok(std::fs::read_to_string(p)?), &|n| {
+                lookup_or_pull(&store, &cli.state_dir, n)
+            })?;
             let id = match call(cli, Request::Run(Box::new(spec)))? {
                 Response::Id { id } => id,
                 other => return Err(Error::Internal(format!("unexpected response {other:?}"))),
@@ -680,6 +682,17 @@ struct CliCredentials {
 impl collocate_registry::auth::Credentials for CliCredentials {
     fn for_registry(&self, _registry: &str) -> Option<(String, String)> {
         Some((self.username.clone()?, self.password.clone().unwrap_or_default()))
+    }
+}
+
+fn lookup_or_pull(store: &collocate_image::config::ImageStore, state_dir: &Path, name: &str) -> Result<ImageMeta> {
+    match store.get(name) {
+        Err(Error::NotFound(_)) => {
+            let Ok(reference) = collocate_registry::Reference::parse(name) else { return store.get(name) };
+            let creds = CliCredentials { username: None, password: None };
+            collocate_image::pull::ensure_pulled(&reference, state_dir, &creds, PullPolicy::Missing)
+        }
+        other => other,
     }
 }
 
