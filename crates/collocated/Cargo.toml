@@ -1,0 +1,42 @@
+[package]
+name = "collocated"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The collocate container daemon."
+
+[lib]
+name = "collocated"
+path = "src/lib.rs"
+
+[[bin]]
+name = "collocated"
+path = "src/main.rs"
+
+[dependencies]
+collocate-core.workspace = true
+collocate-sys.workspace = true
+collocate-store.workspace = true
+collocate-net.workspace = true
+collocate-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+toml = "0.8"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[package.metadata.deb]
+name = "collocated"
+maintainer = "collocate maintainers"
+depends = "nftables, iproute2"
+section = "admin"
+priority = "optional"
+extended-description = "The collocate container daemon: one process per container on a shared kernel, cgroup v2 and nftables based."
+assets = [
+    ["target/release/collocated", "usr/sbin/collocated", "755"],
+    ["../../packaging/collocated.service", "lib/systemd/system/collocated.service", "644"],
+    ["../../packaging/collocated.toml", "etc/collocate/collocated.toml", "644"],
+]
+conf-files = ["/etc/collocate/collocated.toml"]
