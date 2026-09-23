@@ -5,10 +5,12 @@ use collocate_core::net::{Publish, Volume};
 use collocate_core::size::{parse_duration_secs, parse_size};
 use collocate_core::spec::{HealthKind, Healthcheck, Mount, RestartPolicy, RootSource, Series, Spec};
 use collocate_core::{ContainerId, Error, Result};
+use collocate_image::config::{spec_from_image, ImageMeta, RunOverrides};
+use collocate_image::pull::PullPolicy;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 
-pub type OciResolver<'a> = &'a dyn Fn(&str) -> Result<(String, Vec<String>)>;
+pub type OciResolver<'a> = &'a dyn Fn(&str, PullPolicy) -> Result<ImageMeta>;
 
 pub struct BuildCtx<'a> {
     pub secrets: &'a HashMap<String, String>,
@@ -87,30 +89,37 @@ pub fn build_spec(file: &ComposeFile, service: &str, replica: u32, ctx: &BuildCt
     }
     let tctx = Context { secrets: ctx.secrets.clone(), addresses: ctx.addresses.clone(), lb_addresses: ctx.lb_addresses.clone() };
 
-    let root = match (&svc.series, &svc.image) {
+    let resolve_all = |args: &[String]| args.iter().map(|a| resolve(a, &tctx)).collect::<Result<Vec<_>>>();
+    let name = format!("{}-{}-{}", file.project, service, replica + 1);
+    let mut spec = match (&svc.series, &svc.image) {
         (Some(series), _) => {
             let series = Series::parse(series)?;
-            RootSource::Base { series, build_id: (ctx.base_build)(series)? }
+            let root = RootSource::Base { series, build_id: (ctx.base_build)(series)? };
+            Spec::new(&name, root, resolve_all(&[svc.entrypoint.clone(), svc.command.clone()].concat())?)
         }
         (None, Some(image)) => {
-            let (digest, layers) = (ctx.oci)(image)?;
-            RootSource::Oci { digest, layers }
+            let policy = svc.pull_policy.as_deref().map(PullPolicy::parse).transpose()?.unwrap_or_default();
+            let meta = (ctx.oci)(image, policy)?;
+            let ov = RunOverrides {
+                command: resolve_all(&svc.command)?,
+                entrypoint: if svc.entrypoint.is_empty() { None } else { Some(resolve_all(&svc.entrypoint)?) },
+                ..RunOverrides::default()
+            };
+            let mut spec = spec_from_image(&meta, &ov).map_err(|e| Error::InvalidSpec(format!("service {service}: {e}")))?;
+            spec.name = name.clone();
+            spec
         }
         (None, None) => return Err(Error::InvalidSpec(format!("service {service} has no root"))),
     };
-
-    let mut argv = Vec::new();
-    for a in svc.entrypoint.iter().chain(&svc.command) {
-        argv.push(resolve(a, &tctx)?);
-    }
-
-    let name = format!("{}-{}-{}", file.project, service, replica + 1);
-    let mut spec = Spec::new(&name, root, argv);
     spec.hostname = if max == 1 { service.to_string() } else { format!("{service}-{}", replica + 1) };
     spec.persistent = svc.persistent;
 
     for (k, v) in &svc.env {
-        spec.process.env.push((k.clone(), resolve(v, &tctx)?));
+        let v = resolve(v, &tctx)?;
+        match spec.process.env.iter_mut().find(|(ek, _)| ek == k) {
+            Some(slot) => slot.1 = v,
+            None => spec.process.env.push((k.clone(), v)),
+        }
     }
     if let Some(u) = &svc.user {
         spec.process.user = u.clone();

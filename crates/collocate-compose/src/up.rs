@@ -8,9 +8,11 @@ use collocate_core::request::{ContainerInfo, HealthState, LbSpec, Request, Respo
 use collocate_core::spec::{Series, Spec};
 use collocate_core::{Error, Result};
 use collocate_net::ipam::{Ipam, Subnet};
+use collocate_image::config::ImageMeta;
 use collocate_image::pull::PullPolicy;
 use collocate_registry::auth::Credentials;
 use collocate_registry::Reference as OciReference;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -147,6 +149,7 @@ pub struct BuildState {
     addresses: HashMap<String, Vec<Ipv4Addr>>,
     lb_vips: HashMap<String, Ipv4Addr>,
     forced: HashSet<String>,
+    images: RefCell<HashMap<String, ImageMeta>>,
 }
 
 impl BuildState {
@@ -184,7 +187,7 @@ impl BuildState {
         for name in file.loadbalancers.keys() {
             lb_vips.insert(name.clone(), ipam.vip(&file.project, name)?);
         }
-        Ok(BuildState { order, ipam, secrets, addresses, lb_vips, forced })
+        Ok(BuildState { order, ipam, secrets, addresses, lb_vips, forced, images: RefCell::new(HashMap::new()) })
     }
 
     pub fn spec(&mut self, file: &ComposeFile, opts: &UpOptions, service: &str, idx: u32) -> Result<Spec> {
@@ -193,12 +196,17 @@ impl BuildState {
         let registries = file.registries.clone();
         let state_dir = opts.state_dir.clone();
         let dry_run = opts.dry_run;
-        let oci = |image: &str| -> Result<(String, Vec<String>)> {
+        let resolved = &self.images;
+        let oci = |image: &str, policy: PullPolicy| -> Result<ImageMeta> {
+            if let Some(meta) = resolved.borrow().get(image) {
+                return Ok(meta.clone());
+            }
             let reference = OciReference::parse(image).map_err(|e| Error::Invalid(format!("image {image}: {e}")))?;
             let creds = ComposeCredentials { registries: &registries, tctx: &tctx };
-            let policy = if dry_run { PullPolicy::Never } else { PullPolicy::Missing };
+            let policy = if dry_run { PullPolicy::Never } else { policy };
             let meta = collocate_image::pull::ensure_pulled(&reference, &state_dir, &creds, policy)?;
-            Ok((meta.digest, meta.layers))
+            resolved.borrow_mut().insert(image.to_string(), meta.clone());
+            Ok(meta)
         };
         let base_dir = opts.base_dir.clone();
         let dry = opts.dry_run;
