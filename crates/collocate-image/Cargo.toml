@@ -10,8 +10,10 @@ serde_json.workspace = true
 sha2.workspace = true
 tar.workspace = true
 flate2.workspace = true
+ruzstd.workspace = true
 libc.workspace = true
 collocate-registry.workspace = true
 
 [dev-dependencies]
+ruzstd.workspace = true
 tempfile.workspace = true
