@@ -274,6 +274,84 @@ fn fuse_overlayfs_stacks_layers_and_is_writable() {
 }
 
 #[test]
+fn commit_captures_writable_changes_into_a_new_image() {
+    need_root!();
+    let mut layers = Vec::new();
+    let env = Env::start_with(RootModeSetting::FuseOverlay, |state| layers = build_two_layer_oci_image(state));
+    let mut spec = Spec::new(
+        "committable",
+        RootSource::Oci { digest: "sha256:cfg".into(), layers: layers.clone() },
+        vec!["/bin/sh".into(), "-c".into(), "echo committed > /new-file; sleep 30".into()],
+    );
+    spec.process.env.push(("PATH".into(), "/bin".into()));
+    spec.persistent = true;
+    let id = env.run(spec);
+    let probe = |argv: &[&str]| -> i32 {
+        match env
+            .client()
+            .call(&Request::ExecProbe { target: id.to_string(), argv: argv.iter().map(|s| s.to_string()).collect(), timeout_secs: 5 })
+            .unwrap()
+        {
+            Response::Exit { status } => status,
+            other => panic!("{other:?}"),
+        }
+    };
+    wait_until("new file written", || probe(&["test", "-f", "/new-file"]) == 0);
+
+    let digest = match env.client().call(&Request::Commit { target: id.to_string(), image: "snap:v1".into() }).unwrap() {
+        Response::Text { text } => text,
+        other => panic!("{other:?}"),
+    };
+    assert!(digest.starts_with("sha256:"), "{digest}");
+
+    let store = collocate_image::config::ImageStore::new(env.dir.path().join("state"));
+    let meta = store.get("snap:v1").unwrap();
+    assert_eq!(meta.layers.len(), layers.len() + 1);
+
+    let ov = collocate_image::config::RunOverrides {
+        command: vec!["/bin/sh".into(), "-c".into(), "cat /new-file /from-bottom /from-top; sleep 30".into()],
+        entrypoint: None,
+        env: vec![],
+        user: None,
+        workdir: None,
+        publish_exposed: false,
+    };
+    let mut from_commit = collocate_image::config::spec_from_image(&meta, &ov).unwrap();
+    from_commit.name = "from-commit".into();
+    from_commit.hostname = "from-commit".into();
+    from_commit.process.env.push(("PATH".into(), "/bin".into()));
+    env.run(from_commit);
+    wait_until("committed container logged its output", || !env.logs("from-commit").is_empty());
+    let log = env.logs("from-commit");
+    assert!(log.contains("committed") && log.contains("bottom-layer") && log.contains("top-layer"), "{log}");
+}
+
+#[test]
+fn commit_refuses_containers_started_from_the_base_image() {
+    need_root!();
+    let env = Env::start_with(RootModeSetting::FuseOverlay, |_| {});
+    let id = env.run(env.spec("plain", "sleep 30"));
+    let err = env.client().call(&Request::Commit { target: id.to_string(), image: "x".into() }).unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+}
+
+#[test]
+fn commit_refuses_when_the_host_has_no_writable_layer() {
+    need_root!();
+    let mut layers = Vec::new();
+    let env = Env::start_with(RootModeSetting::BindRo, |state| layers = build_two_layer_oci_image(state));
+    let mut spec = Spec::new(
+        "bindro",
+        RootSource::Oci { digest: "sha256:cfg".into(), layers: vec![layers[0].clone()] },
+        vec!["/bin/sleep".into(), "30".into()],
+    );
+    spec.process.env.push(("PATH".into(), "/bin".into()));
+    let id = env.run(spec);
+    let err = env.client().call(&Request::Commit { target: id.to_string(), image: "x".into() }).unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+}
+
+#[test]
 fn ps_reports_state_and_addresses() {
     need_root!();
     let env = Env::start();
