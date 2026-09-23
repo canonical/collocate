@@ -14,6 +14,27 @@ pub enum State {
     Exited,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogSource {
+    #[default]
+    Auto,
+    Captured,
+    Pebble,
+}
+
+impl LogSource {
+    pub fn from_flags(raw: bool, services: &[String]) -> LogSource {
+        if raw {
+            LogSource::Captured
+        } else if services.is_empty() {
+            LogSource::Auto
+        } else {
+            LogSource::Pebble
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContainerInfo {
     pub id: ContainerId,
@@ -97,6 +118,10 @@ pub enum Request {
         target: String,
         tail: Option<usize>,
         offset: Option<u64>,
+        #[serde(default)]
+        source: LogSource,
+        #[serde(default)]
+        services: Vec<String>,
     },
     Exec {
         target: String,
@@ -166,7 +191,12 @@ pub enum Response {
     Text { text: String },
     Names(Vec<String>),
     Exit { status: i32 },
-    Log { data: String, next_offset: u64 },
+    Log {
+        data: String,
+        next_offset: u64,
+        #[serde(default)]
+        source: LogSource,
+    },
     Stats(Vec<ContainerStats>),
     Lbs(Vec<LbStatus>),
     Accepted,

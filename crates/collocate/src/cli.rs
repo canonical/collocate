@@ -307,6 +307,10 @@ pub enum Command {
         follow: bool,
         #[arg(long)]
         tail: Option<usize>,
+        #[arg(short = 's', long = "service", conflicts_with = "raw")]
+        services: Vec<String>,
+        #[arg(long)]
+        raw: bool,
     },
     Exec {
         #[arg(short = 'e', long = "env")]

@@ -188,7 +188,7 @@ fn the_real_controller_brings_a_service_up_and_performs_a_rolling_update() {
         running.len() == 2
             && running.iter().all(|n| {
                 matches!(
-                    api.call(Request::Logs { target: n.clone(), tail: None, offset: None }),
+                    api.call(Request::Logs { target: n.clone(), tail: None, offset: None, source: Default::default(), services: vec![] }),
                     Ok(Response::Log { data, .. }) if data.contains("v2")
                 )
             })

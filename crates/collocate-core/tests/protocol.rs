@@ -1,6 +1,6 @@
 use collocate_core::client::{into_result, Client};
 use collocate_core::net::{Algorithm, NoBackends, Proto};
-use collocate_core::request::{ContainerStats, LbSpec, LbStatus, Request, Response};
+use collocate_core::request::{ContainerStats, LbSpec, LbStatus, LogSource, Request, Response};
 use collocate_core::wire::{read_frame, write_frame};
 use collocate_core::{ContainerId, Error};
 use std::os::unix::net::UnixStream;
@@ -29,7 +29,7 @@ fn new_verbs_roundtrip() {
         Request::LbRemove { project: "app".into(), name: "web".into() },
         Request::LbList,
         Request::Shutdown,
-        Request::Logs { target: "web".into(), tail: Some(10), offset: Some(5) },
+        Request::Logs { target: "web".into(), tail: Some(10), offset: Some(5), source: LogSource::Pebble, services: vec!["svc".into()] },
     ];
     for r in reqs {
         let mut buf = Vec::new();
@@ -53,7 +53,7 @@ fn new_responses_roundtrip() {
         cpu_limit_milli: Some(1000),
     };
     let status = LbStatus { spec: lb(), backends: vec!["172.30.0.4:8080".into()], vip: "172.30.255.1".parse().unwrap() };
-    for r in [Response::Stats(vec![stats]), Response::Lbs(vec![status]), Response::Log { data: "hi".into(), next_offset: 2 }] {
+    for r in [Response::Stats(vec![stats]), Response::Lbs(vec![status]), Response::Log { data: "hi".into(), next_offset: 2, source: LogSource::Captured }] {
         let mut buf = Vec::new();
         write_frame(&mut buf, &r).unwrap();
         let back: Response = read_frame(&mut buf.as_slice()).unwrap();

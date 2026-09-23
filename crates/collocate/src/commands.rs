@@ -9,7 +9,7 @@ use collocate_compose::model::ComposeFile;
 use collocate_compose::up::{down, plan_only, up, UpOptions};
 use collocate_core::client::Client;
 use collocate_core::net::{Algorithm, NoBackends, Proto};
-use collocate_core::request::{ContainerInfo, LbSpec, LbStatus, Request, Response, State};
+use collocate_core::request::{ContainerInfo, LbSpec, LbStatus, LogSource, Request, Response, State};
 use collocate_core::spec::{ImageKind, Series};
 use collocate_core::{Error, Result};
 use collocate_image::config::ImageMeta;
@@ -75,19 +75,24 @@ fn table_opts(columns: &[String], no_headers: bool, no_truncate: bool) -> TableO
     TableOptions { columns: columns.to_vec(), no_headers, no_truncate, interactive: is_interactive(), max_width: terminal_width(80) }
 }
 
-fn follow_logs(cli: &Cli, target: &str, until_exit: bool, tail: Option<usize>) -> Result<()> {
-    let mut offset = match call(cli, Request::Logs { target: target.into(), tail, offset: None })? {
-        Response::Log { data, next_offset } => {
+fn follow_logs(cli: &Cli, target: &str, until_exit: bool, tail: Option<usize>, services: &[String], raw: bool) -> Result<()> {
+    let first = LogSource::from_flags(raw, services);
+    let (mut offset, source) = match call(cli, Request::Logs { target: target.into(), tail, offset: None, source: first, services: services.to_vec() })? {
+        Response::Log { data, next_offset, source } => {
             print!("{data}");
-            next_offset
+            (next_offset, source)
         }
-        _ => 0,
+        _ => (0, first),
     };
     loop {
         let running = containers(cli, true, None)?
             .iter()
             .any(|c| (c.name == target || c.id.to_string().starts_with(target)) && c.state == State::Running);
-        if let Response::Log { data, next_offset } = call(cli, Request::Logs { target: target.into(), tail: None, offset: Some(offset) })? {
+        if source == LogSource::Pebble && !running {
+            return Ok(());
+        }
+        let req = Request::Logs { target: target.into(), tail: None, offset: Some(offset), source, services: services.to_vec() };
+        if let Response::Log { data, next_offset, .. } = call(cli, req)? {
             print!("{data}");
             let _ = std::io::stdout().flush();
             offset = next_offset;
@@ -257,7 +262,7 @@ pub fn run(cli: &Cli) -> Result<i32> {
                 return Ok(0);
             }
             let target = id.to_string();
-            follow_logs(cli, &target, true, None)?;
+            follow_logs(cli, &target, true, None, &[], true)?;
             wait_status(cli, &target)
         }
         Command::List { all, project, columns, no_headers, no_truncate } => {
@@ -364,8 +369,8 @@ pub fn run(cli: &Cli) -> Result<i32> {
             println!("{code}");
             Ok(0)
         }
-        Command::Logs { target, follow, tail } => {
-            follow_logs(cli, target, *follow, *tail)?;
+        Command::Logs { target, follow, tail, services, raw } => {
+            follow_logs(cli, target, *follow, *tail, services, *raw)?;
             Ok(0)
         }
         Command::Exec { env, user, workdir, timeout, target, command } => {

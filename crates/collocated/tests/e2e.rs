@@ -145,7 +145,7 @@ impl Env {
     }
 
     fn logs(&self, target: &str) -> String {
-        match self.client().call(&Request::Logs { target: target.into(), tail: None, offset: None }).unwrap() {
+        match self.client().call(&Request::Logs { target: target.into(), tail: None, offset: None, source: Default::default(), services: vec![] }).unwrap() {
             Response::Log { data, .. } => data,
             other => panic!("{other:?}"),
         }

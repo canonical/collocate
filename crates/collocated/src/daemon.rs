@@ -3,8 +3,8 @@ use crate::health::{http_check, tcp_check, HealthTracker};
 use crate::restart::{restart_delay, should_restart};
 use crate::secrets::SecretStore;
 use collocate_core::id::resolve_ref;
-use collocate_core::request::{ContainerInfo, ContainerStats, HealthState, LbSpec, LbStatus, Request, Response, State};
-use collocate_core::spec::{HealthKind, Mount, RootSource, Spec};
+use collocate_core::request::{ContainerInfo, ContainerStats, HealthState, LbSpec, LbStatus, LogSource, Request, Response, State};
+use collocate_core::spec::{HealthKind, ImageKind, Mount, RootSource, Spec};
 use collocate_core::wire::MAX_FRAME;
 use collocate_core::{ContainerId, Error, Result};
 use collocate_net::files::{parse_nameservers, render_hosts, render_resolv};
@@ -894,30 +894,10 @@ impl Daemon {
                     None => Ok(Some(Response::Exit { status: self.store.get(&id)?.exit_status.unwrap_or(0) })),
                 }
             }
-            Request::Logs { target, tail, offset } => {
+            Request::Logs { target, tail, offset, source, services } => {
                 let id = self.resolve(&target)?;
                 let spec = self.store.get(&id)?;
-                let bytes = fs::read(self.log_path(&spec)).unwrap_or_default();
-                let total = bytes.len() as u64;
-                let text = match offset {
-                    Some(o) => String::from_utf8_lossy(&bytes[(o.min(total)) as usize..]).into_owned(),
-                    None => {
-                        let all = String::from_utf8_lossy(&bytes).into_owned();
-                        match tail {
-                            Some(n) => {
-                                let lines: Vec<&str> = all.lines().collect();
-                                let from = lines.len().saturating_sub(n);
-                                let mut t = lines[from..].join("\n");
-                                if !t.is_empty() {
-                                    t.push('\n');
-                                }
-                                t
-                            }
-                            None => all,
-                        }
-                    }
-                };
-                Ok(Some(Response::Log { data: text, next_offset: total }))
+                self.op_logs(&spec, tail, offset, source, &services).map(Some)
             }
             Request::Exec { target, argv, env, user, workdir, tty: _, timeout_secs } => {
                 self.op_exec(conn, ExecArgs { target, argv, env, user, workdir, timeout_secs })
@@ -1073,6 +1053,67 @@ impl Daemon {
             self.fw_dirty = true;
         }
         Ok(None)
+    }
+
+    fn captured_logs(&self, spec: &Spec, tail: Option<usize>, offset: Option<u64>) -> Response {
+        let bytes = fs::read(self.log_path(spec)).unwrap_or_default();
+        let total = bytes.len() as u64;
+        let text = match offset {
+            Some(o) => String::from_utf8_lossy(&bytes[(o.min(total)) as usize..]).into_owned(),
+            None => {
+                let all = String::from_utf8_lossy(&bytes).into_owned();
+                match tail {
+                    Some(n) => {
+                        let lines: Vec<&str> = all.lines().collect();
+                        let from = lines.len().saturating_sub(n);
+                        let mut t = lines[from..].join("\n");
+                        if !t.is_empty() {
+                            t.push('\n');
+                        }
+                        t
+                    }
+                    None => all,
+                }
+            }
+        };
+        Response::Log { data: text, next_offset: total, source: LogSource::Captured }
+    }
+
+    fn pebble_client(&self, id: &ContainerId, spec: &Spec) -> Option<collocate_pebble::Client> {
+        let l = self.live.get(id)?;
+        let socket = format!("/proc/{}/root{}", l.pid, spec.pebble_socket());
+        Some(collocate_pebble::Client::new(socket, CONNECT_TIMEOUT))
+    }
+
+    fn op_logs(&self, spec: &Spec, tail: Option<usize>, offset: Option<u64>, source: LogSource, services: &[String]) -> Result<Response> {
+        let want_pebble = match source {
+            LogSource::Captured => false,
+            LogSource::Pebble => true,
+            LogSource::Auto => spec.image_kind == ImageKind::Pebble || !services.is_empty(),
+        };
+        if !want_pebble {
+            return Ok(self.captured_logs(spec, tail, offset));
+        }
+        if spec.image_kind != ImageKind::Pebble {
+            return Err(Error::Invalid(format!("{} is not a rock, so it has no Pebble services", spec.name)));
+        }
+        let fetched = self
+            .pebble_client(&spec.id, spec)
+            .ok_or_else(|| Error::Conflict(format!("{} is not running", spec.name)))
+            .and_then(|c| c.logs(services, if offset.is_some() { None } else { tail }).map_err(|e| Error::Unreachable(e.to_string())));
+        let entries = match fetched {
+            Ok(entries) => entries,
+            Err(_) if source == LogSource::Auto && services.is_empty() => return Ok(self.captured_logs(spec, tail, offset)),
+            Err(e) => return Err(e),
+        };
+        let after = offset.unwrap_or(0);
+        let mut next = after;
+        let mut data = String::new();
+        for e in entries.iter().filter(|e| e.nanos() > after) {
+            data.push_str(&e.render());
+            next = next.max(e.nanos());
+        }
+        Ok(Response::Log { data, next_offset: next, source: LogSource::Pebble })
     }
 
     fn op_exec(&mut self, conn: u64, args: ExecArgs) -> Result<Option<Response>> {
