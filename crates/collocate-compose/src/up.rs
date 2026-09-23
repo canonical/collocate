@@ -25,7 +25,11 @@ struct ComposeCredentials<'a> {
 
 impl Credentials for ComposeCredentials<'_> {
     fn for_registry(&self, registry: &str) -> Option<(String, String)> {
-        let def = self.registries.get(registry)?;
+        let def = self
+            .registries
+            .iter()
+            .find(|(host, _)| collocate_registry::reference::canonical_registry(host) == registry)
+            .map(|(_, d)| d)?;
         let user = resolve(&def.username, self.tctx).ok()?;
         let pass = resolve(&def.password, self.tctx).ok()?;
         Some((user, pass))
