@@ -212,24 +212,31 @@ const NOSDX: u64 = libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
 fn apply_op(staging: &Path, op: &MountOp) -> std::result::Result<(), String> {
     let name = format!("{op:?}");
     match op {
-        MountOp::Proc => step(&name, mount::mount(Some("proc"), text(&join(staging, "/proc")), Some("proc"), NOSDX, None)),
+        MountOp::Proc => {
+            step(&name, ensure_dir(&join(staging, "/proc")))?;
+            step(&name, mount::mount(Some("proc"), text(&join(staging, "/proc")), Some("proc"), NOSDX, None))
+        }
         MountOp::SysfsRo => {
+            step(&name, ensure_dir(&join(staging, "/sys")))?;
             step(&name, mount::mount(Some("sysfs"), text(&join(staging, "/sys")), Some("sysfs"), NOSDX | libc::MS_RDONLY, None))
         }
         MountOp::Cgroup2Ro => step(
             &name,
             mount::mount(Some("cgroup2"), text(&join(staging, "/sys/fs/cgroup")), Some("cgroup2"), NOSDX | libc::MS_RDONLY, None),
         ),
-        MountOp::DevTmpfs => step(
-            &name,
-            mount::mount(
-                Some("tmpfs"),
-                text(&join(staging, "/dev")),
-                Some("tmpfs"),
-                libc::MS_NOSUID | libc::MS_STRICTATIME,
-                Some("mode=755,size=65536k"),
-            ),
-        ),
+        MountOp::DevTmpfs => {
+            step(&name, ensure_dir(&join(staging, "/dev")))?;
+            step(
+                &name,
+                mount::mount(
+                    Some("tmpfs"),
+                    text(&join(staging, "/dev")),
+                    Some("tmpfs"),
+                    libc::MS_NOSUID | libc::MS_STRICTATIME,
+                    Some("mode=755,size=65536k"),
+                ),
+            )
+        }
         MountOp::DevNode(n) => {
             let target = join(staging, &format!("/dev/{n}"));
             step(&name, ensure_file(&target))?;
@@ -264,16 +271,19 @@ fn apply_op(staging: &Path, op: &MountOp) -> std::result::Result<(), String> {
                 ),
             )
         }
-        MountOp::RunTmpfs => step(
-            &name,
-            mount::mount(
-                Some("tmpfs"),
-                text(&join(staging, "/run")),
-                Some("tmpfs"),
-                libc::MS_NOSUID | libc::MS_NODEV,
-                Some("mode=755,size=64m"),
-            ),
-        ),
+        MountOp::RunTmpfs => {
+            step(&name, ensure_dir(&join(staging, "/run")))?;
+            step(
+                &name,
+                mount::mount(
+                    Some("tmpfs"),
+                    text(&join(staging, "/run")),
+                    Some("tmpfs"),
+                    libc::MS_NOSUID | libc::MS_NODEV,
+                    Some("mode=755,size=64m"),
+                ),
+            )
+        }
         MountOp::Tmpfs { dst, size } => {
             let target = join(staging, dst);
             step(&name, ensure_dir(&target))?;
