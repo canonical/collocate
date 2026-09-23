@@ -1,0 +1,19 @@
+[Unit]
+Description=collocate container daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/collocated --config /etc/collocate/collocated.toml
+Delegate=yes
+DelegateSubgroup=supervisor
+KillMode=process
+Restart=on-failure
+RuntimeDirectory=collocate
+StateDirectory=collocate
+LimitNOFILE=1048576
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target
