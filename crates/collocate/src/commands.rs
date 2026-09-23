@@ -130,6 +130,7 @@ fn compose_options(cli: &Cli, a: &ComposeArgs, file: &Path) -> Result<UpOptions>
     Ok(UpOptions {
         subnet,
         base_dir: file.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| std::path::PathBuf::from("."), Path::to_path_buf),
+        state_dir: cli.state_dir.clone(),
         regenerate_secrets: a.regenerate_secrets.as_ref().map(|s| if s.is_empty() { Vec::new() } else { vec![s.clone()] }),
         dry_run: a.dry_run,
         ready_timeout: Duration::from_secs(a.timeout),
@@ -932,6 +933,7 @@ fn cluster(cli: &Cli, cmd: &ClusterCmd) -> Result<i32> {
                         .parent()
                         .filter(|p| !p.as_os_str().is_empty())
                         .map_or_else(|| std::path::PathBuf::from("."), Path::to_path_buf),
+                    state_dir: cli.state_dir.clone(),
                     regenerate_secrets: None,
                     dry_run: false,
                     ready_timeout: Duration::from_secs(a.timeout),

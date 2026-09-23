@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 pub struct UpOptions {
     pub subnet: String,
     pub base_dir: PathBuf,
+    pub state_dir: PathBuf,
     pub regenerate_secrets: Option<Vec<String>>,
     pub dry_run: bool,
     pub ready_timeout: Duration,

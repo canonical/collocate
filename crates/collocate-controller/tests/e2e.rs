@@ -161,6 +161,7 @@ fn the_real_controller_brings_a_service_up_and_performs_a_rolling_update() {
     let opts = UpOptions {
         subnet: "10.215.0.0/24".into(),
         base_dir: PathBuf::from("."),
+        state_dir: std::env::temp_dir(),
         regenerate_secrets: None,
         dry_run: false,
         ready_timeout: Duration::from_secs(10),
