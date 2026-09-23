@@ -1,0 +1,16 @@
+[package]
+name = "collocate-image"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+collocate-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+flate2.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
