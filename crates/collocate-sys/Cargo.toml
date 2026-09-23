@@ -1,0 +1,11 @@
+[package]
+name = "collocate-sys"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+collocate-core.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
