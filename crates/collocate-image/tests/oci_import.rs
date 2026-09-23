@@ -154,3 +154,17 @@ fn imports_an_oci_archive_with_zstd_layers() {
     let ldir = dir.path().join("layers").join(l1.1.replace(':', "-"));
     assert_eq!(std::fs::read_to_string(ldir.join("etc/conf")).unwrap(), "zstd");
 }
+
+#[test]
+fn a_layer_shipping_pebble_marks_the_import_as_a_rock() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = plain_layer(&[("etc/os-release", "ubuntu")]);
+    let pebble = plain_layer(&[("bin/pebble", "elf")]);
+    let ar = oci_archive("realrock:1", &[base, pebble], "/usr/bin/app", Comp::Gzip);
+    let imported = import_archive(Cursor::new(ar), dir.path()).unwrap();
+    assert_eq!(imported[0].kind, collocate_core::spec::ImageKind::Pebble);
+
+    let plain = plain_layer(&[("bin/app", "x")]);
+    let ar = oci_archive("plain:1", &[plain], "/bin/app", Comp::Plain);
+    assert_eq!(import_archive(Cursor::new(ar), dir.path()).unwrap()[0].kind, collocate_core::spec::ImageKind::Oci);
+}

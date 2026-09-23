@@ -701,11 +701,13 @@ impl Daemon {
         }
         let store = collocate_image::config::ImageStore::new(&self.cfg.state_dir);
         let diff_id = collocate_image::commit::commit_upper_to_store(&upper, &store)?;
-        let config = store.list()?.into_iter().find(|m| &m.digest == digest).map(|m| m.config).unwrap_or_default();
+        let source = store.list()?.into_iter().find(|m| &m.digest == digest);
+        let kind = source.as_ref().map(|m| m.kind).unwrap_or(spec.image_kind);
+        let config = source.map(|m| m.config).unwrap_or_default();
         let mut new_layers = layers.clone();
         new_layers.push(diff_id);
         let meta_digest = collocate_image::commit::synthetic_digest(&new_layers, &config)?;
-        let meta = collocate_image::config::ImageMeta { name: image.to_string(), digest: meta_digest.clone(), layers: new_layers, config };
+        let meta = collocate_image::config::ImageMeta { name: image.to_string(), digest: meta_digest.clone(), layers: new_layers, config, kind };
         store.put(&meta)?;
         Ok(meta_digest)
     }

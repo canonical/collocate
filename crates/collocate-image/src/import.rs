@@ -89,7 +89,7 @@ fn import_docker_archive(staging: &Path, store: &ImageStore) -> Result<Vec<Image
         let config_bytes = fs::read(staging.join(&entry.config))?;
         let digest = format!("sha256:{}", hex(&Sha256::digest(&config_bytes)));
         let name = entry.repo_tags.as_ref().and_then(|t| t.first().cloned()).unwrap_or_else(|| digest.clone());
-        let meta = parse_config(&name, &digest, &String::from_utf8_lossy(&config_bytes))?;
+        let mut meta = parse_config(&name, &digest, &String::from_utf8_lossy(&config_bytes))?;
         if meta.layers.len() != entry.layers.len() {
             return Err(Error::Invalid(format!(
                 "image {name}: manifest lists {} layers but the config lists {}",
@@ -100,6 +100,7 @@ fn import_docker_archive(staging: &Path, store: &ImageStore) -> Result<Vec<Image
         for (path, diff_id) in entry.layers.iter().zip(&meta.layers) {
             store_layer_from_path(store, &staging.join(path), diff_id, mode)?;
         }
+        meta.kind = crate::kind::detect(store, &meta);
         store.put(&meta)?;
         imported.push(meta);
     }
@@ -117,7 +118,7 @@ fn import_oci_layout(staging: &Path, store: &ImageStore) -> Result<Vec<ImageMeta
         .get("org.opencontainers.image.ref.name")
         .cloned()
         .unwrap_or_else(|| manifest.config.digest.clone());
-    let meta = parse_config(&name, &manifest.config.digest, &String::from_utf8_lossy(&config_bytes))?;
+    let mut meta = parse_config(&name, &manifest.config.digest, &String::from_utf8_lossy(&config_bytes))?;
     if meta.layers.len() != manifest.layers.len() {
         return Err(Error::Invalid(format!(
             "image {name}: manifest lists {} layers but the config lists {}",
@@ -129,6 +130,7 @@ fn import_oci_layout(staging: &Path, store: &ImageStore) -> Result<Vec<ImageMeta
         let compression = oci::layer_compression(&desc.media_type)?;
         store_layer_from_blob(store, &oci::blob_path(staging, &desc.digest)?, diff_id, compression, mode)?;
     }
+    meta.kind = crate::kind::detect(store, &meta);
     store.put(&meta)?;
     Ok(vec![meta])
 }

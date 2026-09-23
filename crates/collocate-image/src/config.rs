@@ -1,5 +1,5 @@
 use collocate_core::net::{Proto, Publish};
-use collocate_core::spec::{HealthKind, Healthcheck, RootSource, Spec};
+use collocate_core::spec::{HealthKind, Healthcheck, ImageKind, RootSource, Spec};
 use collocate_core::{Error, Result};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
@@ -108,6 +108,8 @@ pub struct ImageMeta {
     pub digest: String,
     pub layers: Vec<String>,
     pub config: ImageConfig,
+    #[serde(default)]
+    pub kind: ImageKind,
 }
 
 fn host_arch() -> &'static str {
@@ -148,6 +150,7 @@ pub fn parse_config(name: &str, digest: &str, json: &str) -> Result<ImageMeta> {
                 start_period_secs: h.start_period / 1_000_000_000,
             }),
         },
+        kind: ImageKind::Oci,
     })
 }
 
@@ -193,6 +196,7 @@ pub fn spec_from_image(meta: &ImageMeta, ov: &RunOverrides) -> Result<Spec> {
         return Err(Error::InvalidSpec(format!("image {} has no command; supply one after --", meta.name)));
     }
     let mut spec = Spec::new("", RootSource::Oci { digest: meta.digest.clone(), layers: meta.layers.clone() }, argv);
+    spec.image_kind = meta.kind;
 
     for e in &meta.config.env {
         if let Some((k, v)) = e.split_once('=') {
