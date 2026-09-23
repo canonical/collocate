@@ -1334,11 +1334,15 @@ impl Daemon {
     fn check_health(&mut self, now: Instant) {
         let in_flight: HashSet<ContainerId> =
             self.probes.values().filter_map(|p| if let ProbeOrigin::Health(id) = p.origin { Some(id) } else { None }).collect();
-        let mut due: Vec<(ContainerId, HealthKind, std::net::Ipv4Addr, u64)> = Vec::new();
+        let mut due: Vec<(ContainerId, HealthKind, Option<std::net::Ipv4Addr>, u64)> = Vec::new();
         for (id, l) in self.live.iter_mut() {
-            let (Some(_), Some(hc), Some(addr)) = (l.tracker.as_ref(), l.spec.healthcheck.as_ref(), l.spec.net.addr) else {
+            let (Some(_), Some(hc)) = (l.tracker.as_ref(), l.spec.healthcheck.as_ref()) else {
                 continue;
             };
+            let addr = l.spec.net.addr;
+            if addr.is_none() && matches!(hc.kind, HealthKind::Tcp { .. } | HealthKind::Http { .. }) {
+                continue;
+            }
             if now.duration_since(l.last_check) < Duration::from_secs(hc.interval_secs.max(1)) {
                 continue;
             }
@@ -1349,17 +1353,41 @@ impl Daemon {
             due.push((*id, hc.kind.clone(), addr, hc.timeout_secs.max(1)));
         }
         for (id, kind, addr, timeout_secs) in due {
-            match kind {
-                HealthKind::Tcp { port } => {
-                    let ok = tcp_check(addr, port, Duration::from_secs(timeout_secs).min(CONNECT_TIMEOUT));
+            let timeout = Duration::from_secs(timeout_secs).min(CONNECT_TIMEOUT);
+            match (kind, addr) {
+                (HealthKind::Tcp { port }, Some(addr)) => {
+                    let ok = tcp_check(addr, port, timeout);
                     self.record_health(id, ok);
                 }
-                HealthKind::Http { port, path } => {
-                    let ok = http_check(addr, port, &path, Duration::from_secs(timeout_secs).min(CONNECT_TIMEOUT));
+                (HealthKind::Http { port, path }, Some(addr)) => {
+                    let ok = http_check(addr, port, &path, timeout);
                     self.record_health(id, ok);
                 }
-                HealthKind::Exec { argv } => self.spawn_health_exec(id, argv, now + Duration::from_secs(timeout_secs)),
+                (HealthKind::Tcp { .. } | HealthKind::Http { .. }, None) => {}
+                (HealthKind::Exec { argv }, _) => self.spawn_health_exec(id, argv, now + Duration::from_secs(timeout_secs)),
+                (HealthKind::Pebble { level }, _) => {
+                    let problem = self.pebble_health(id, level.as_deref(), timeout);
+                    let before = self.health_state(id);
+                    self.record_health(id, problem.is_none());
+                    if let Some(p) = problem.filter(|_| self.health_state(id) != before) {
+                        log!("{}: {p}", self.live.get(&id).map_or("", |l| l.spec.name.as_str()));
+                    }
+                }
             }
+        }
+    }
+
+    fn health_state(&self, id: ContainerId) -> Option<HealthState> {
+        self.live.get(&id)?.tracker.as_ref().map(|t| t.state())
+    }
+
+    fn pebble_health(&self, id: ContainerId, level: Option<&str>, timeout: Duration) -> Option<String> {
+        let Some(l) = self.live.get(&id) else { return Some("container is gone".into()) };
+        let socket = format!("/proc/{}/root{}", l.pid, l.spec.pebble_socket());
+        match collocate_pebble::Client::new(socket, timeout).health(level) {
+            Ok(h) if h.healthy => None,
+            Ok(h) => Some(format!("pebble reports {}", h.problems.join("; "))),
+            Err(e) => Some(e.to_string()),
         }
     }
 

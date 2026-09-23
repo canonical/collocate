@@ -68,6 +68,8 @@ impl ImageKind {
     }
 }
 
+pub const PEBBLE_DEFAULT_DIR: &str = "/var/lib/pebble/default";
+
 fn default_user() -> String {
     "0".into()
 }
@@ -166,6 +168,10 @@ pub enum HealthKind {
     Tcp { port: u16 },
     Http { port: u16, path: String },
     Exec { argv: Vec<String> },
+    Pebble {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        level: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,6 +316,20 @@ impl Spec {
             }
         }
         Ok(())
+    }
+
+    pub fn pebble_dir(&self) -> String {
+        let env = |k: &str| self.process.env.iter().find(|(ek, _)| ek == k).map(|(_, v)| v.clone()).filter(|v| !v.is_empty());
+        env("PEBBLE").unwrap_or_else(|| PEBBLE_DEFAULT_DIR.to_string())
+    }
+
+    pub fn pebble_socket(&self) -> String {
+        self.process
+            .env
+            .iter()
+            .find(|(k, v)| k == "PEBBLE_SOCKET" && !v.is_empty())
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| format!("{}/.pebble.socket", self.pebble_dir()))
     }
 
     pub fn spec_hash(&self) -> [u8; 32] {
