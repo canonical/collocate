@@ -462,6 +462,55 @@ fn secrets_are_generated_once_and_mounted_read_only() {
 }
 
 #[test]
+fn idle_containers_are_reaped_after_their_timeout() {
+    need_root!();
+    let env = Env::start();
+    let mut s = env.spec("session", "sleep 30");
+    s.persistent = true;
+    s.idle_timeout_secs = Some(1);
+    env.run(s);
+    wait_until("session reaped", || env.ps().iter().all(|c| c.name != "session"));
+}
+
+#[test]
+fn exec_activity_resets_the_idle_timer() {
+    need_root!();
+    let env = Env::start();
+    let mut s = env.spec("session", "sleep 30");
+    s.persistent = true;
+    s.idle_timeout_secs = Some(2);
+    let id = env.run(s);
+    std::thread::sleep(Duration::from_millis(1200));
+
+    let null = fs::File::open("/dev/null").unwrap();
+    let req = Request::Exec {
+        target: id.to_string(),
+        argv: vec!["/bin/sh".into(), "-c".into(), "true".into()],
+        env: vec![],
+        user: None,
+        workdir: None,
+        tty: false,
+        timeout_secs: None,
+    };
+    let mut c = env.client();
+    c.send_with_fds(&req, &[&null, &null, &null]).unwrap();
+    c.read_response().unwrap();
+
+    std::thread::sleep(Duration::from_millis(1200));
+    assert!(env.ps().iter().any(|c| c.name == "session"), "activity should have reset the idle timer");
+    wait_until("session eventually reaped", || env.ps().iter().all(|c| c.name != "session"));
+}
+
+#[test]
+fn containers_without_an_idle_timeout_are_never_reaped() {
+    need_root!();
+    let env = Env::start();
+    env.run(env.spec("forever", "sleep 30"));
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(env.ps().iter().any(|c| c.name == "forever"));
+}
+
+#[test]
 fn restart_policy_relaunches_failed_containers() {
     need_root!();
     let env = Env::start();
