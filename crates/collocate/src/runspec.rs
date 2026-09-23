@@ -116,6 +116,7 @@ pub fn build_spec(
     if let Some(t) = a.stop_timeout {
         spec.process.stop_timeout_secs = t;
     }
+    spec.idle_timeout_secs = a.idle_timeout;
 
     if let Some(c) = a.cpus {
         spec.limits.cpus_milli = Some((c * 1000.0).round() as u32);

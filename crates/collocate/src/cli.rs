@@ -97,6 +97,8 @@ pub struct RunArgs {
     pub stop_signal: Option<String>,
     #[arg(long)]
     pub stop_timeout: Option<u64>,
+    #[arg(long)]
+    pub idle_timeout: Option<u64>,
     #[arg(short = 'd', long)]
     pub detach: bool,
     #[arg(last = true)]

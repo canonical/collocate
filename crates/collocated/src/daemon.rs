@@ -70,6 +70,7 @@ struct Live {
     kill_at: Option<Instant>,
     tracker: Option<HealthTracker>,
     last_check: Instant,
+    last_activity: Instant,
 }
 
 struct Conn {
@@ -108,6 +109,7 @@ struct Probe {
 enum Task {
     Relaunch(ContainerId),
     RemoveExited(ContainerId),
+    ReapIdle(ContainerId),
 }
 
 pub struct Daemon {
@@ -350,6 +352,7 @@ impl Daemon {
         io(self.epoll.add(pidfd.as_raw_fd(), token, Events::READABLE))?;
         self.pid_tokens.insert(token, id);
         let tracker = spec.healthcheck.as_ref().map(|h| HealthTracker::new(h.retries));
+        let idle_timeout = spec.idle_timeout_secs;
         self.live.insert(
             id,
             Live {
@@ -365,10 +368,18 @@ impl Daemon {
                 kill_at: None,
                 tracker,
                 last_check: Instant::now(),
+                last_activity: Instant::now(),
             },
         );
+        self.schedule_idle_reap(id, idle_timeout);
         log!("re-adopted container {id} (pid {pid})");
         Ok(())
+    }
+
+    fn schedule_idle_reap(&mut self, id: ContainerId, idle_timeout_secs: Option<u64>) {
+        if let Some(t) = idle_timeout_secs {
+            self.schedule.push((Instant::now() + Duration::from_secs(t.max(1)), Task::ReapIdle(id)));
+        }
     }
 
     fn remove_runtime_dirs(&mut self, id: &ContainerId) {
@@ -592,6 +603,7 @@ impl Daemon {
         io(self.epoll.add(started.pidfd.as_raw_fd(), token, Events::READABLE))?;
         self.pid_tokens.insert(token, id);
         let tracker = spec.healthcheck.as_ref().map(|h| HealthTracker::new(h.retries));
+        let idle_timeout = spec.idle_timeout_secs;
         let rt = Runtime {
             pid: started.pid as u32,
             starttime: starttime(started.pid).unwrap_or(0),
@@ -617,8 +629,10 @@ impl Daemon {
                 kill_at: None,
                 tracker,
                 last_check: Instant::now(),
+                last_activity: Instant::now(),
             },
         );
+        self.schedule_idle_reap(id, idle_timeout);
         self.fw_dirty = true;
         Ok(())
     }
@@ -657,6 +671,14 @@ impl Daemon {
             self.schedule.push((Instant::now() + EXITED_GRACE, Task::RemoveExited(id)));
         }
         self.fw_dirty = true;
+    }
+
+    fn reap_idle(&mut self, id: ContainerId) {
+        if self.live.contains_key(&id) {
+            let _ = self.cgroups.kill(&id);
+            self.reap_blocking(id);
+        }
+        let _ = self.purge(&id);
     }
 
     fn purge(&mut self, id: &ContainerId) -> Result<()> {
@@ -1039,6 +1061,11 @@ impl Daemon {
             stdio: [fds[0].as_raw_fd(), fds[1].as_raw_fd(), fds[2].as_raw_fd()],
         };
         let (_pid, pidfd) = spawn_exec(&req)?;
+        let idle_timeout = live.spec.idle_timeout_secs;
+        if let Some(l) = self.live.get_mut(&id) {
+            l.last_activity = Instant::now();
+        }
+        self.schedule_idle_reap(id, idle_timeout);
         let token = self.token();
         io(self.epoll.add(pidfd.as_raw_fd(), token, Events::READABLE))?;
         let deadline = args.timeout_secs.map(|t| Instant::now() + Duration::from_secs(t.max(1)));
@@ -1230,6 +1257,14 @@ impl Daemon {
                 Task::RemoveExited(id) => {
                     if !self.live.contains_key(&id) && self.store.get(&id).is_ok_and(|s| !s.persistent) {
                         let _ = self.purge(&id);
+                    }
+                }
+                Task::ReapIdle(id) => {
+                    let due = self.live.get(&id).is_some_and(|l| {
+                        l.spec.idle_timeout_secs.is_some_and(|t| now.duration_since(l.last_activity) >= Duration::from_secs(t.max(1)))
+                    });
+                    if due {
+                        self.reap_idle(id);
                     }
                 }
             }
