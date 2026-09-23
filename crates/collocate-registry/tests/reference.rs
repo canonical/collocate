@@ -58,3 +58,12 @@ fn registry_with_port_and_nested_path() {
 fn empty_reference_is_rejected() {
     assert!(Reference::parse("").is_err());
 }
+
+#[test]
+fn docker_io_aliases_normalize_to_the_default_registry() {
+    for s in ["docker.io/nginx", "index.docker.io/library/nginx:latest"] {
+        let r = Reference::parse(s).unwrap();
+        assert_eq!(r.registry, "registry-1.docker.io");
+        assert_eq!(r.repository, "library/nginx");
+    }
+}

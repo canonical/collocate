@@ -15,9 +15,16 @@ pub struct Reference {
     pub selector: Selector,
 }
 
+pub fn canonical_registry(host: &str) -> &str {
+    match host {
+        "docker.io" | "index.docker.io" => DEFAULT_REGISTRY,
+        other => other,
+    }
+}
+
 fn split_registry(s: &str) -> (&str, &str) {
     match s.split_once('/') {
-        Some((first, rest)) if first.contains('.') || first.contains(':') || first == "localhost" => (first, rest),
+        Some((first, rest)) if first.contains('.') || first.contains(':') || first == "localhost" => (canonical_registry(first), rest),
         _ => (DEFAULT_REGISTRY, s),
     }
 }
