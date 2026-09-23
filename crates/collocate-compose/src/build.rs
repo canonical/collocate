@@ -68,6 +68,8 @@ fn health(def: &HealthDef, ctx: &Context) -> Result<Healthcheck> {
         HealthKind::Tcp { port }
     } else if let Some(h) = &def.http {
         HealthKind::Http { port: h.port, path: h.path.clone() }
+    } else if let Some(level) = &def.pebble {
+        HealthKind::Pebble { level: Some(level.clone()).filter(|l| l != "any") }
     } else {
         let argv = def.exec.clone().unwrap_or_default();
         HealthKind::Exec { argv: argv.iter().map(|a| resolve(a, ctx)).collect::<Result<_>>()? }

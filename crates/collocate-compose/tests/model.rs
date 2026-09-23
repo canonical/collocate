@@ -140,3 +140,14 @@ fn pull_policy_is_validated_and_only_applies_to_images() {
     assert!(load(&format!("{img}    pull_policy: daily\n")).is_err());
     assert!(load(&format!("{MINI}    pull_policy: always\n")).is_err());
 }
+
+#[test]
+fn pebble_healthchecks_need_a_valid_level_and_an_image() {
+    let img = "version: 1\nproject: p\nservices:\n  a:\n    image: rock:1\n    healthcheck:\n";
+    for ok in ["alive", "ready", "any"] {
+        assert!(load(&format!("{img}      pebble: {ok}\n")).is_ok(), "{ok}");
+    }
+    assert!(load(&format!("{img}      pebble: sometimes\n")).is_err());
+    assert!(load(&format!("{img}      pebble: ready\n      tcp: 80\n")).is_err());
+    assert!(load(&format!("{MINI}    healthcheck:\n      pebble: ready\n")).is_err());
+}

@@ -89,6 +89,8 @@ pub struct HealthDef {
     pub http: Option<HttpCheck>,
     #[serde(default)]
     pub exec: Option<Vec<String>>,
+    #[serde(default)]
+    pub pebble: Option<String>,
     #[serde(default = "thirty")]
     pub interval: String,
     #[serde(default = "five")]
@@ -407,8 +409,16 @@ impl ComposeFile {
                 for d in [&h.interval, &h.timeout, &h.start_period] {
                     parse_duration_secs(d)?;
                 }
-                if [h.tcp.is_some(), h.http.is_some(), h.exec.is_some()].iter().filter(|b| **b).count() != 1 {
-                    return invalid(format!("service {name}: healthcheck needs exactly one of tcp, http or exec"));
+                if [h.tcp.is_some(), h.http.is_some(), h.exec.is_some(), h.pebble.is_some()].iter().filter(|b| **b).count() != 1 {
+                    return invalid(format!("service {name}: healthcheck needs exactly one of tcp, http, exec or pebble"));
+                }
+                if let Some(level) = &h.pebble {
+                    if !matches!(level.as_str(), "alive" | "ready" | "any") {
+                        return invalid(format!("service {name}: pebble healthcheck level must be alive, ready or any"));
+                    }
+                    if s.image.is_none() {
+                        return invalid(format!("service {name}: pebble healthchecks need an image service"));
+                    }
                 }
             }
             if let Some(r) = &s.restart {

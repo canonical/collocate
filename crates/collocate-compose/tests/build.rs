@@ -215,6 +215,25 @@ fn service_command_and_entrypoint_override_the_image() {
 }
 
 #[test]
+fn rocks_get_a_pebble_healthcheck_by_default() {
+    let fx = image_fixture("  pg:\n    image: rock-postgres:14\n");
+    let s = build(&fx, "pg", 0).unwrap();
+    assert_eq!(s.image_kind, ImageKind::Pebble);
+    assert_eq!(s.process.argv, vec!["/bin/pebble", "enter"]);
+    assert_eq!(s.healthcheck.unwrap().kind, HealthKind::Pebble { level: None });
+}
+
+#[test]
+fn explicit_healthchecks_win_over_the_pebble_default() {
+    let fx = image_fixture("  pg:\n    image: rock-postgres:14\n    healthcheck:\n      tcp: 5432\n");
+    assert_eq!(build(&fx, "pg", 0).unwrap().healthcheck.unwrap().kind, HealthKind::Tcp { port: 5432 });
+    let fx = image_fixture("  pg:\n    image: rock-postgres:14\n    healthcheck:\n      pebble: ready\n");
+    assert_eq!(build(&fx, "pg", 0).unwrap().healthcheck.unwrap().kind, HealthKind::Pebble { level: Some("ready".into()) });
+    let fx = image_fixture("  pg:\n    image: rock-postgres:14\n    healthcheck:\n      pebble: any\n");
+    assert_eq!(build(&fx, "pg", 0).unwrap().healthcheck.unwrap().kind, HealthKind::Pebble { level: None });
+}
+
+#[test]
 fn pull_policy_reaches_the_resolver() {
     let seen = RefCell::new(Vec::new());
     let fx = image_fixture("  a:\n    image: redis:7\n    pull_policy: always\n  b:\n    image: redis:7\n");

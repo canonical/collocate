@@ -90,6 +90,7 @@ fn convert_health(v: &Value) -> Option<HealthDef> {
         tcp: None,
         http: None,
         exec: Some(exec),
+        pebble: None,
         interval: text("interval").unwrap_or_else(|| "30s".into()),
         timeout: text("timeout").unwrap_or_else(|| "30s".into()),
         retries: obj.get("retries").and_then(Value::as_u64).map_or(3, |n| n as u32),
