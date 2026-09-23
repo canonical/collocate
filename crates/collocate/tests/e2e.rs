@@ -31,7 +31,7 @@ struct Env {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-const APPLETS: [&str; 12] = ["sh", "cat", "ls", "echo", "grep", "id", "hostname", "touch", "wc", "sleep", "env", "true"];
+const APPLETS: [&str; 13] = ["sh", "cat", "ls", "echo", "grep", "id", "hostname", "touch", "wc", "sleep", "env", "true", "tee"];
 
 impl Env {
     fn start() -> Env {
@@ -188,6 +188,44 @@ fn container_lifecycle_through_the_binary() {
 
     env.ok(&["-y", "rm", "web"]);
     assert!(!env.ok(&["list", "-a"]).contains("web"));
+}
+
+#[test]
+fn cp_copies_files_between_host_and_container() {
+    need_root!();
+    let env = Env::start();
+    env.ok(&["run", "-d", "--series", "24.04", "--name", "box", "--", "/bin/sleep", "60"]);
+
+    let local_src = env.dir.path().join("local.txt");
+    fs::write(&local_src, "from-host\n").unwrap();
+    env.ok(&["cp", local_src.to_str().unwrap(), "box:/tmp/dst.txt"]);
+    assert_eq!(env.ok(&["exec", "box", "--", "cat", "/tmp/dst.txt"]), "from-host\n");
+
+    env.ok(&["cp", "box:/tmp/dst.txt", "local_copy.txt"]);
+    assert_eq!(fs::read_to_string(env.dir.path().join("local_copy.txt")).unwrap(), "from-host\n");
+}
+
+#[test]
+fn cp_handles_destination_paths_with_spaces_and_quotes() {
+    need_root!();
+    let env = Env::start();
+    env.ok(&["run", "-d", "--series", "24.04", "--name", "box", "--", "/bin/sleep", "60"]);
+    let local_src = env.dir.path().join("local.txt");
+    fs::write(&local_src, "payload\n").unwrap();
+    let weird = "box:/tmp/weird '\" name.txt";
+    env.ok(&["cp", local_src.to_str().unwrap(), weird]);
+    assert_eq!(env.ok(&["exec", "box", "--", "cat", "/tmp/weird '\" name.txt"]), "payload\n");
+}
+
+#[test]
+fn cp_requires_exactly_one_side_to_reference_a_container() {
+    need_root!();
+    let env = Env::start();
+    let both_local = env.cli(&["cp", "a.txt", "b.txt"]);
+    assert!(!both_local.status.success());
+    env.ok(&["run", "-d", "--series", "24.04", "--name", "box", "--", "/bin/sleep", "60"]);
+    let both_remote = env.cli(&["cp", "box:/a", "box:/b"]);
+    assert!(!both_remote.status.success());
 }
 
 #[test]

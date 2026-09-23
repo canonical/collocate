@@ -212,6 +212,7 @@ fn other_subcommands_parse() {
         vec!["collocate", "delete", "-f", "a"],
         vec!["collocate", "logs", "-f", "--tail", "10", "a"],
         vec!["collocate", "exec", "-e", "K=V", "-u", "root", "a", "--", "ls", "-l"],
+        vec!["collocate", "cp", "a.txt", "c:/b.txt"],
         vec!["collocate", "status", "--watch", "--json"],
         vec!["collocate", "secret", "list"],
         vec!["collocate", "secret", "set", "app", "pw", "--from-file", "-"],
