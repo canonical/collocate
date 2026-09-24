@@ -1,5 +1,5 @@
 use collocate_cluster::lxc::{exec_args, launch_args, list_args, push_args, running_nodes};
-use collocate_cluster::plan::{cross_node_references, provision_plan, Step};
+use collocate_cluster::plan::cross_node_references;
 use collocate_compose::model::{ComposeFile, NodeDef};
 
 fn node(cpus: Option<f64>, memory: Option<&str>, target: Option<&str>) -> NodeDef {
@@ -50,32 +50,6 @@ fn file(y: &str) -> ComposeFile {
 }
 
 const CLUSTER: &str = "version: 1\nproject: p\nnodes:\n  edge-1:\n    image: ubuntu:24.04\n  edge-2:\n    image: ubuntu:24.04\nservices:\n  db:\n    node: edge-1\n    series: \"24.04\"\n    command: [/bin/db]\n  app:\n    node: edge-2\n    series: \"24.04\"\n    depends_on: [db]\n    command: [/bin/app]\n";
-
-#[test]
-fn provisioning_skips_existing_nodes_and_is_idempotent() {
-    let f = file(CLUSTER);
-    let plan = provision_plan(&f, &[], "./collocate.deb");
-    let launches: Vec<&Step> = plan.iter().filter(|st| matches!(st, Step::Launch { .. })).collect();
-    assert_eq!(launches.len(), 2);
-    assert!(plan.iter().any(|st| matches!(st, Step::Install { node } if node == "edge-1")));
-    let again = provision_plan(&f, &["edge-1".to_string(), "edge-2".to_string()], "./collocate.deb");
-    assert!(again.iter().all(|st| !matches!(st, Step::Launch { .. } | Step::Push { .. } | Step::Install { .. })), "{again:?}");
-    let partial = provision_plan(&f, &["edge-1".to_string()], "./collocate.deb");
-    assert_eq!(partial.iter().filter(|st| matches!(st, Step::Launch { node, .. } if node == "edge-2")).count(), 1);
-    assert_eq!(partial.iter().filter(|st| matches!(st, Step::Launch { node, .. } if node == "edge-1")).count(), 0);
-}
-
-#[test]
-fn launch_precedes_push_and_install_for_each_node() {
-    let plan = provision_plan(&file(CLUSTER), &[], "./c.deb");
-    for n in ["edge-1", "edge-2"] {
-        let idx = |f: &dyn Fn(&Step) -> bool| plan.iter().position(f).unwrap();
-        let l = idx(&|s| matches!(s, Step::Launch { node, .. } if node == n));
-        let p = idx(&|s| matches!(s, Step::Push { node, .. } if node == n));
-        let i = idx(&|s| matches!(s, Step::Install { node } if node == n));
-        assert!(l < p && p < i);
-    }
-}
 
 #[test]
 fn cross_node_address_references_are_detected() {

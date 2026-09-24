@@ -13,8 +13,12 @@ pub struct LxcApi {
 
 impl LxcApi {
     pub fn spawn(program: &str, node: &str, relay: &[String]) -> Result<LxcApi> {
+        LxcApi::spawn_args(program, &exec_args(node, relay))
+    }
+
+    pub fn spawn_args(program: &str, args: &[String]) -> Result<LxcApi> {
         let mut child = Command::new(program)
-            .args(exec_args(node, relay))
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

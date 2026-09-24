@@ -50,3 +50,40 @@ pub fn running_nodes(json: &str) -> Result<Vec<String>> {
     let arr = v.as_array().ok_or_else(|| Error::Parse("lxc list did not return an array".into()))?;
     Ok(arr.iter().filter(|i| i["status"].as_str() == Some("Running")).filter_map(|i| i["name"].as_str().map(String::from)).collect())
 }
+
+pub struct Lxc {
+    pub program: String,
+}
+
+impl Lxc {
+    pub fn new(program: impl Into<String>) -> Lxc {
+        Lxc { program: program.into() }
+    }
+
+    pub fn run(&self, args: &[String], stdin: Option<&str>) -> Result<String> {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new(&self.program)
+            .args(args)
+            .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| Error::Unreachable(format!("{}: {e}", self.program)))?;
+        if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+            pipe.write_all(text.as_bytes())?;
+        }
+        let out = child.wait_with_output()?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let detail = if stderr.trim().is_empty() { stdout.trim().to_string() } else { stderr.trim().to_string() };
+            return Err(Error::Internal(format!("{} {} failed: {detail}", self.program, args.join(" "))));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    pub fn ok(&self, args: &[String]) -> bool {
+        self.run(args, None).is_ok()
+    }
+}

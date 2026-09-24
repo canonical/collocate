@@ -7,6 +7,8 @@ edition.workspace = true
 collocate-core.workspace = true
 collocate-compose.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
