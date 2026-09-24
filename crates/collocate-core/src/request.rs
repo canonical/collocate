@@ -1,3 +1,4 @@
+use crate::auth::{Access, Caller, Role, Scope};
 use crate::id::ContainerId;
 use crate::net::{Algorithm, NoBackends, Proto};
 use crate::settings::DaemonSettings;
@@ -213,11 +214,101 @@ pub enum Request {
     ControllerSet {
         compose: String,
     },
+    ConfigPut {
+        project: String,
+        name: String,
+        content: String,
+    },
+    As {
+        caller: Caller,
+        request: Box<Request>,
+    },
+    TrustTokenCreate {
+        name: String,
+        role: Role,
+        #[serde(default)]
+        projects: Vec<String>,
+        #[serde(default)]
+        expiry_secs: Option<u64>,
+    },
+    TrustTokenList,
+    TrustTokenRevoke {
+        name: String,
+    },
+    TrustList,
+    TrustRemove {
+        name: String,
+    },
+    TrustAddCertificate {
+        name: String,
+        certificate: String,
+        role: Role,
+        #[serde(default)]
+        projects: Vec<String>,
+    },
+    TrustEnroll {
+        secret: String,
+        certificate: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    TrustLookup {
+        fingerprint: String,
+    },
 }
 
 impl Request {
     pub fn allowed_uninitialized(&self) -> bool {
         matches!(self, Request::Info | Request::Init { .. } | Request::Shutdown)
+    }
+
+    pub fn verb(&self) -> String {
+        serde_json::to_value(self).ok().and_then(|v| v["verb"].as_str().map(String::from)).unwrap_or_default()
+    }
+
+    pub fn needs_descriptors(&self) -> bool {
+        matches!(self, Request::Exec { .. } | Request::ImageImport)
+    }
+
+    pub fn access(&self) -> Access {
+        use Role::{Admin, Operator, Viewer};
+        let target = |t: &String| Scope::Target(t.clone());
+        match self {
+            Request::Info => Access::new(Viewer, Scope::Open),
+            Request::Ps { project, .. } | Request::Stats { project } => Access::new(Viewer, Scope::Filtered(project.clone())),
+            Request::SecretList { project } => Access::new(Viewer, Scope::Filtered(project.clone())),
+            Request::LbList => Access::new(Viewer, Scope::Filtered(None)),
+            Request::Logs { target: t, .. } | Request::Wait { target: t } => Access::new(Viewer, target(t)),
+            Request::ImageList | Request::ImageShow { .. } => Access::new(Viewer, Scope::Open),
+            Request::Run(spec) => Access::new(Operator, Scope::Project(spec.labels.project.clone())),
+            Request::Start { target: t }
+            | Request::Stop { target: t, .. }
+            | Request::Restart { target: t, .. }
+            | Request::Kill { target: t, .. }
+            | Request::Rm { target: t, .. }
+            | Request::Exec { target: t, .. }
+            | Request::ExecProbe { target: t, .. }
+            | Request::Commit { target: t, .. } => Access::new(Operator, target(t)),
+            Request::SecretEnsure { project, .. }
+            | Request::SecretReveal { project, .. }
+            | Request::SecretSet { project, .. }
+            | Request::SecretRemove { project, .. }
+            | Request::LbRemove { project, .. }
+            | Request::ConfigPut { project, .. } => Access::new(Operator, Scope::Project(Some(project.clone()))),
+            Request::LbSet { lb } => Access::new(Operator, Scope::Project(Some(lb.project.clone()))),
+            Request::ImagePull { .. } | Request::ImageImport => Access::new(Operator, Scope::Open),
+            Request::ImageDelete { .. } | Request::ImagePrune => Access::new(Operator, Scope::Unrestricted),
+            Request::Init { .. }
+            | Request::Shutdown
+            | Request::ControllerSet { .. }
+            | Request::TrustTokenCreate { .. }
+            | Request::TrustTokenList
+            | Request::TrustTokenRevoke { .. }
+            | Request::TrustList
+            | Request::TrustRemove { .. }
+            | Request::TrustAddCertificate { .. } => Access::new(Admin, Scope::Unrestricted),
+            Request::As { .. } | Request::TrustEnroll { .. } | Request::TrustLookup { .. } => Access::new(Admin, Scope::Internal),
+        }
     }
 }
 
