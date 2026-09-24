@@ -1,0 +1,21 @@
+[package]
+name = "collocate-remote"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTTPS transport for collocate: TLS setup, HTTP framing, remotes and the remote API client."
+
+[dependencies]
+collocate-core.workspace = true
+collocate-trust.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
+sha2.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+httparse.workspace = true
+tungstenite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
