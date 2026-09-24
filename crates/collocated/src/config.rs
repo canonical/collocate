@@ -1,29 +1,12 @@
+use collocate_core::layout::Layout;
 use collocate_core::limits::{Limits, DEFAULT_PIDS_MAX};
+use collocate_core::settings::DaemonSettings;
+pub use collocate_core::settings::{Defaults, RootModeSetting};
 use collocate_core::size::parse_size;
 use collocate_core::{Error, Result};
 use collocate_net::ipam::Subnet;
 use serde::Deserialize;
 use std::path::PathBuf;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub enum RootModeSetting {
-    #[serde(rename = "auto")]
-    Auto,
-    #[serde(rename = "overlay")]
-    Overlay,
-    #[serde(rename = "fuse-overlay")]
-    FuseOverlay,
-    #[serde(rename = "bind-ro")]
-    BindRo,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct Defaults {
-    pub memory: Option<String>,
-    pub cpus: Option<f64>,
-    pub pids_max: Option<u64>,
-}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -41,25 +24,12 @@ pub struct Config {
     pub move_self_to_supervisor: bool,
     pub nameserver_files: Vec<PathBuf>,
     pub defaults: Defaults,
+    pub https_address: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config {
-            state_dir: "/var/lib/collocate".into(),
-            run_dir: "/run/collocate".into(),
-            subnet: "172.30.0.0/16".into(),
-            bridge: "collocate0".into(),
-            root_mode: RootModeSetting::Auto,
-            init_path: "/usr/libexec/collocate/collocate-init".into(),
-            cgroup_root: "/sys/fs/cgroup".into(),
-            cgroup_slice: "collocate.slice".into(),
-            node_name: None,
-            group: "collocate".into(),
-            move_self_to_supervisor: true,
-            nameserver_files: vec!["/run/systemd/resolve/resolv.conf".into(), "/etc/resolv.conf".into()],
-            defaults: Defaults::default(),
-        }
+        Config::with_layout(&Layout::detect())
     }
 }
 
@@ -70,10 +40,45 @@ impl Config {
         Ok(c)
     }
 
-    pub fn load(path: &std::path::Path) -> Result<Config> {
+    pub fn with_layout(layout: &Layout) -> Config {
+        Config::from_settings(layout, &DaemonSettings::default())
+    }
+
+    pub fn from_settings(layout: &Layout, s: &DaemonSettings) -> Config {
+        Config {
+            state_dir: layout.state_dir.clone(),
+            run_dir: layout.run_dir.clone(),
+            subnet: s.subnet.clone(),
+            bridge: s.bridge.clone(),
+            root_mode: s.root_mode,
+            init_path: layout.init_src.clone(),
+            cgroup_root: "/sys/fs/cgroup".into(),
+            cgroup_slice: "collocate.slice".into(),
+            node_name: s.node_name.clone(),
+            group: s.group.clone(),
+            move_self_to_supervisor: !layout.snap,
+            nameserver_files: vec!["/run/systemd/resolve/resolv.conf".into(), "/etc/resolv.conf".into()],
+            defaults: s.defaults.clone(),
+            https_address: s.https_address.clone(),
+        }
+    }
+
+    pub fn settings(&self) -> DaemonSettings {
+        DaemonSettings {
+            subnet: self.subnet.clone(),
+            bridge: self.bridge.clone(),
+            root_mode: self.root_mode,
+            group: self.group.clone(),
+            node_name: self.node_name.clone(),
+            defaults: self.defaults.clone(),
+            https_address: self.https_address.clone(),
+        }
+    }
+
+    pub fn load(path: &std::path::Path) -> Result<Option<Config>> {
         match std::fs::read_to_string(path) {
-            Ok(t) => Config::from_toml(&t),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
+            Ok(t) => Config::from_toml(&t).map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
