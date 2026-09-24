@@ -21,6 +21,7 @@ tempfile = "3"
 tar = "0.4"
 flate2 = "1"
 ruzstd = "0.9"
+toml = "0.8"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 collocate-registry = { path = "crates/collocate-registry" }
 collocate-pebble = { path = "crates/collocate-pebble" }

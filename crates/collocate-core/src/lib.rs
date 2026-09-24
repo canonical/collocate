@@ -7,6 +7,7 @@ pub mod net;
 pub mod policy;
 pub mod procinfo;
 pub mod request;
+pub mod settings;
 pub mod size;
 pub mod spec;
 pub mod wire;
