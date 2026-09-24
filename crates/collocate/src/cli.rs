@@ -1,15 +1,18 @@
 use crate::output::{resolve_verbosity, Format, Verbosity};
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use collocate_core::layout::Layout;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "collocate", version, about = "Run and manage lightweight containers.")]
 #[command(
-    after_help = "Containers:\n  run, list, status, start, stop, restart, exec, cp, commit, logs, wait, delete\n\nCompose:\n  up, down, plan, config\n\nResources:\n  image, secret, load-balancer, cluster\n\nDiagnostics:\n  info, doctor\n\nRun 'collocate help <command>' for more information on a command."
+    after_help = "Setup:\n  init, remote, trust\n\nContainers:\n  run, list, status, start, stop, restart, exec, cp, commit, logs, wait, delete\n\nCompose:\n  up, down, plan, config\n\nResources:\n  image, secret, load-balancer, cluster\n\nDiagnostics:\n  info, doctor\n\nRun 'collocate help <command>' for more information on a command."
 )]
 pub struct Cli {
-    #[arg(long, global = true, default_value = "/run/collocate/collocate.sock", env = "COLLOCATE_HOST")]
+    #[arg(long, global = true, default_value_os_t = Layout::detect().socket(), env = "COLLOCATE_HOST")]
     pub host: PathBuf,
+    #[arg(long, global = true, env = "COLLOCATE_REMOTE")]
+    pub remote: Option<String>,
     #[arg(long, global = true, value_enum, default_value_t = Format::Table)]
     pub format: Format,
     #[arg(short = 'q', long = "quiet", global = true, action = ArgAction::SetTrue)]
@@ -20,7 +23,7 @@ pub struct Cli {
     pub verbosity_override: Option<Verbosity>,
     #[arg(short = 'y', long = "yes", global = true)]
     pub yes: bool,
-    #[arg(long, global = true, default_value = "/var/lib/collocate", env = "COLLOCATE_STATE_DIR")]
+    #[arg(long, global = true, default_value_os_t = Layout::detect().state_dir, env = "COLLOCATE_STATE_DIR")]
     pub state_dir: PathBuf,
     #[command(subcommand)]
     pub command: Command,
@@ -156,12 +159,162 @@ pub enum ImageCmd {
 pub struct ClusterArgs {
     #[arg(short = 'f', long, default_value = "collocate-compose.yaml")]
     pub file: PathBuf,
-    #[arg(long, default_value = "lxc")]
+    #[arg(long, default_value_t = Layout::detect().lxc)]
     pub lxc: String,
-    #[arg(long, default_value = "/usr/share/collocate/collocate.deb")]
-    pub deb: String,
-    #[arg(long, default_value = "collocate-relay")]
-    pub relay: String,
+    #[arg(long)]
+    pub install: Option<String>,
+    #[arg(long)]
+    pub relay: Option<String>,
+    #[arg(long, default_value_t = 60)]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RemoteCmd {
+    Add {
+        name: String,
+        token: String,
+        #[arg(long)]
+        client_name: Option<String>,
+    },
+    #[command(visible_alias = "ls")]
+    List,
+    #[command(visible_alias = "rm")]
+    Remove {
+        name: String,
+    },
+    Rename {
+        old: String,
+        new: String,
+    },
+    Switch {
+        name: String,
+    },
+    GetDefault,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TrustTokenCmd {
+    #[command(visible_alias = "ls")]
+    List,
+    Revoke {
+        name: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TrustCmd {
+    #[command(
+        after_help = "Examples:\n  collocate trust add ci --role operator --projects web,api\n  collocate trust add dashboard --role viewer --expiry 1h"
+    )]
+    Add {
+        name: String,
+        #[arg(long, default_value = "operator")]
+        role: String,
+        #[arg(long, value_delimiter = ',')]
+        projects: Vec<String>,
+        #[arg(long)]
+        expiry: Option<String>,
+    },
+    #[command(visible_alias = "ls")]
+    List,
+    Show {
+        name: String,
+    },
+    #[command(visible_alias = "rm")]
+    Remove {
+        name: String,
+    },
+    AddCertificate {
+        name: String,
+        file: PathBuf,
+        #[arg(long, default_value = "operator")]
+        role: String,
+        #[arg(long, value_delimiter = ',')]
+        projects: Vec<String>,
+    },
+    #[command(subcommand)]
+    Token(TrustTokenCmd),
+}
+
+#[derive(Debug, Args)]
+pub struct NodeArgs {
+    pub name: String,
+    #[arg(long)]
+    pub target: Option<String>,
+    #[arg(long)]
+    pub image: Option<String>,
+    #[arg(long)]
+    pub cpus: Option<f64>,
+    #[arg(long)]
+    pub memory: Option<String>,
+    #[arg(long)]
+    pub install: Option<String>,
+    #[arg(long, default_value_t = Layout::detect().lxc)]
+    pub lxc: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum InitMode {
+    Local,
+    Lxd,
+}
+
+#[derive(Debug, Args, Default)]
+#[command(
+    after_help = "Examples:\n  sudo collocate init\n  sudo collocate init --auto --subnet 10.40.0.0/16\n  sudo collocate init --auto --mode lxd --nodes 3 --install channel:latest/edge\n  sudo collocate init --preseed < preseed.yaml\n  collocate init --dump"
+)]
+pub struct InitArgs {
+    #[arg(long, conflicts_with_all = ["preseed", "dump"])]
+    pub auto: bool,
+    #[arg(long, conflicts_with = "dump")]
+    pub preseed: bool,
+    #[arg(long)]
+    pub dump: bool,
+    #[arg(long)]
+    pub force: bool,
+    #[arg(long, value_enum)]
+    pub mode: Option<InitMode>,
+    #[arg(long)]
+    pub subnet: Option<String>,
+    #[arg(long)]
+    pub bridge: Option<String>,
+    #[arg(long)]
+    pub root_mode: Option<String>,
+    #[arg(long)]
+    pub group: Option<String>,
+    #[arg(long)]
+    pub node_name: Option<String>,
+    #[arg(long)]
+    pub memory: Option<String>,
+    #[arg(long)]
+    pub cpus: Option<f64>,
+    #[arg(long)]
+    pub pids_max: Option<u64>,
+    #[arg(long, value_name = "[HOST]:PORT")]
+    pub https_address: Option<String>,
+    #[arg(long)]
+    pub lxd_remote: Option<String>,
+    #[arg(long, requires = "lxd_remote")]
+    pub lxd_url: Option<String>,
+    #[arg(long, requires = "lxd_url")]
+    pub lxd_token: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+    #[arg(long)]
+    pub nodes: Option<u32>,
+    #[arg(long = "node", value_name = "NAME[:TARGET]")]
+    pub node: Vec<String>,
+    #[arg(long)]
+    pub image: Option<String>,
+    #[arg(long)]
+    pub node_cpus: Option<f64>,
+    #[arg(long)]
+    pub node_memory: Option<String>,
+    #[arg(long)]
+    pub install: Option<String>,
+    #[arg(long)]
+    pub lxc: Option<String>,
     #[arg(long, default_value_t = 60)]
     pub timeout: u64,
 }
@@ -178,7 +331,16 @@ pub enum ClusterCmd {
     Status(ClusterArgs),
     #[command(visible_alias = "ls")]
     List {
-        #[arg(long, default_value = "lxc")]
+        #[arg(long, default_value_t = Layout::detect().lxc)]
+        lxc: String,
+    },
+    AddNode(NodeArgs),
+    #[command(visible_alias = "rm-node")]
+    RemoveNode {
+        name: String,
+        #[arg(long)]
+        keep_instance: bool,
+        #[arg(long, default_value_t = Layout::detect().lxc)]
         lxc: String,
     },
 }
@@ -236,6 +398,8 @@ pub struct ComposeArgs {
     pub subnet: Option<String>,
     #[arg(long, num_args = 0..=1, default_missing_value = "")]
     pub regenerate_secrets: Option<String>,
+    #[arg(long)]
+    pub managed: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -356,6 +520,11 @@ pub enum Command {
         #[arg(long, default_value = "converted")]
         project: String,
     },
+    Init(Box<InitArgs>),
+    #[command(subcommand)]
+    Remote(RemoteCmd),
+    #[command(subcommand)]
+    Trust(TrustCmd),
     Info,
     Doctor,
     Completion {
