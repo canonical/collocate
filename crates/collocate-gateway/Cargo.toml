@@ -1,0 +1,27 @@
+[package]
+name = "collocate-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTTPS gateway exposing the collocate API to trusted remote clients."
+
+[lib]
+name = "collocate_gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "collocate-gateway"
+path = "src/main.rs"
+
+[dependencies]
+collocate-core.workspace = true
+collocate-sys.workspace = true
+collocate-trust.workspace = true
+collocate-remote.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustls.workspace = true
+tungstenite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

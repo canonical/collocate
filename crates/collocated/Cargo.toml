@@ -42,6 +42,8 @@ extended-description = "The collocate container daemon: one process per containe
 assets = [
     ["target/release/collocated", "usr/sbin/collocated", "755"],
     ["target/release/collocate-init", "usr/libexec/collocate/collocate-init", "755"],
+    ["target/release/collocate-gateway", "usr/sbin/collocate-gateway", "755"],
+    ["../../packaging/collocate-gateway.service", "lib/systemd/system/collocate-gateway.service", "644"],
     ["../../packaging/collocated.service", "lib/systemd/system/collocated.service", "644"],
     ["../../packaging/collocated.toml", "etc/collocate/collocated.toml", "644"],
 ]

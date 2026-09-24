@@ -1,0 +1,17 @@
+[Unit]
+Description=collocate HTTPS gateway for trusted remote clients
+After=collocated.service
+Wants=collocated.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/collocate-gateway
+Restart=on-failure
+ProtectSystem=strict
+ReadWritePaths=/run/collocate
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
