@@ -37,6 +37,7 @@ pub fn bridge_setup(bridge: &str, subnet: &Subnet) -> Vec<Cmd> {
         cmd(&["ip", "addr", "replace", &cidr, "dev", bridge]),
         cmd(&["ip", "link", "set", bridge, "up"]),
         cmd(&["sysctl", "-qw", "net.ipv4.ip_forward=1"]),
+        cmd(&["sysctl", "-qw", &format!("net.ipv4.conf.{bridge}.route_localnet=1")]),
     ]
 }
 
@@ -52,6 +53,20 @@ pub fn veth_setup(id: &ContainerId, bridge: &str) -> Vec<Cmd> {
 pub fn move_to_ns(id: &ContainerId, pid: i32) -> Cmd {
     let (_, peer) = veth_names(id);
     cmd(&["ip", "link", "set", &peer, "netns", &pid.to_string()])
+}
+
+pub const PING_GROUP_MAX: u64 = 2_147_483_647;
+
+pub fn ping_group_range(gid_map: &str) -> (u64, u64) {
+    let mapped = gid_map.lines().find_map(|l| {
+        let f: Vec<u64> = l.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        (f.len() == 3 && f[0] == 0 && f[2] > 0).then(|| f[2])
+    });
+    match mapped {
+        Some(count) => (0, (count - 1).min(PING_GROUP_MAX)),
+        None if gid_map.trim().is_empty() => (0, PING_GROUP_MAX),
+        None => (1, 0),
+    }
 }
 
 pub fn in_ns_config(pid: i32, id: &ContainerId, addr: Ipv4Addr, prefix: u8, gateway: Ipv4Addr, ping_group: bool) -> Vec<Cmd> {
@@ -70,7 +85,9 @@ pub fn in_ns_config(pid: i32, id: &ContainerId, addr: Ipv4Addr, prefix: u8, gate
         inner(&["ip", "route", "add", "default", "via", &gateway.to_string()]),
     ];
     if ping_group {
-        cmds.push(inner(&["sysctl", "-qw", "net.ipv4.ping_group_range=0 2147483647"]));
+        let map = std::fs::read_to_string("/proc/self/gid_map").unwrap_or_default();
+        let (low, high) = ping_group_range(&map);
+        cmds.push(inner(&["sysctl", "-qw", &format!("net.ipv4.ping_group_range={low} {high}")]));
     }
     cmds
 }

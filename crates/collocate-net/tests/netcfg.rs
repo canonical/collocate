@@ -17,6 +17,7 @@ fn bridge_setup_is_idempotent_friendly() {
     assert!(cmds.contains(&c(&["ip", "addr", "replace", "172.30.0.1/16", "dev", "collocate0"])));
     assert!(cmds.contains(&c(&["ip", "link", "set", "collocate0", "up"])));
     assert!(cmds.contains(&c(&["sysctl", "-qw", "net.ipv4.ip_forward=1"])));
+    assert!(cmds.contains(&c(&["sysctl", "-qw", "net.ipv4.conf.collocate0.route_localnet=1"])));
 }
 
 #[test]
@@ -43,7 +44,19 @@ fn in_namespace_configuration_uses_nsenter() {
     assert!(tails.contains(&vec!["ip", "addr", "add", "172.30.0.5/16", "dev", "eth0"]));
     assert!(tails.contains(&vec!["ip", "link", "set", "eth0", "up"]));
     assert!(tails.contains(&vec!["ip", "route", "add", "default", "via", "172.30.0.1"]));
-    assert!(tails.contains(&vec!["sysctl", "-qw", "net.ipv4.ping_group_range=0 2147483647"]));
+    let (low, high) = collocate_net::netcfg::ping_group_range(&std::fs::read_to_string("/proc/self/gid_map").unwrap());
+    let expected = format!("net.ipv4.ping_group_range={low} {high}");
+    assert!(tails.contains(&vec!["sysctl", "-qw", expected.as_str()]), "{tails:?}");
+}
+
+#[test]
+fn the_ping_group_range_fits_the_user_namespace() {
+    use collocate_net::netcfg::ping_group_range;
+    assert_eq!(ping_group_range("         0          0 4294967295\n"), (0, 2147483647));
+    assert_eq!(ping_group_range("         0    1000000 1000000000\n"), (0, 999999999));
+    assert_eq!(ping_group_range("         0    1000000      65536\n"), (0, 65535));
+    assert_eq!(ping_group_range("      1000       1000          1\n"), (1, 0));
+    assert_eq!(ping_group_range(""), (0, 2147483647));
 }
 
 #[test]

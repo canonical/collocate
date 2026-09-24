@@ -89,11 +89,7 @@ pub fn render(rs: &Ruleset) -> String {
         for p in &c.publish {
             let target = format!("dnat ip to {}:{}", c.addr, p.container);
             let _ = writeln!(pre, "    iifname != \"{br}\" fib daddr type local {} dport {} {target} comment \"{tag}\"", p.proto, p.host);
-            let _ = writeln!(
-                out_chain,
-                "    ip daddr != 127.0.0.0/8 fib daddr type local {} dport {} {target} comment \"{tag}\"",
-                p.proto, p.host
-            );
+            let _ = writeln!(out_chain, "    fib daddr type local {} dport {} {target} comment \"{tag}\"", p.proto, p.host);
         }
     }
 
@@ -114,8 +110,7 @@ pub fn render(rs: &Ruleset) -> String {
         let _ = writeln!(out_chain, "    ip daddr {} {} dport {} {expr} comment \"{tag}\"", lb.vip, lb.proto, lb.listen);
         for port in &lb.publish {
             let _ = writeln!(pre, "    iifname != \"{br}\" fib daddr type local {} dport {port} {expr} comment \"{tag}\"", lb.proto);
-            let _ =
-                writeln!(out_chain, "    ip daddr != 127.0.0.0/8 fib daddr type local {} dport {port} {expr} comment \"{tag}\"", lb.proto);
+            let _ = writeln!(out_chain, "    fib daddr type local {} dport {port} {expr} comment \"{tag}\"", lb.proto);
         }
         let addrs: BTreeSet<Ipv4Addr> = lb.backends.iter().filter(|b| b.weight > 0).map(|b| b.addr).collect();
         let list: Vec<String> = addrs.iter().map(ToString::to_string).collect();
@@ -131,7 +126,7 @@ pub fn render(rs: &Ruleset) -> String {
     let _ = writeln!(s, "  chain output {{\n    type nat hook output priority -100; policy accept;\n{out_chain}  }}");
     let _ = writeln!(
         s,
-        "  chain postrouting {{\n    type nat hook postrouting priority srcnat; policy accept;\n    ip saddr {} oifname != \"{br}\" masquerade\n{post}  }}",
+        "  chain postrouting {{\n    type nat hook postrouting priority srcnat; policy accept;\n    ip saddr {} oifname != \"{br}\" masquerade\n    ip saddr 127.0.0.0/8 oifname \"{br}\" masquerade\n{post}  }}",
         rs.subnet
     );
     let _ = writeln!(

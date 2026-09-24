@@ -40,7 +40,9 @@ fn publish_rules_dnat_external_and_host_traffic_with_tags() {
     assert!(out.contains(
         "iifname != \"collocate0\" fib daddr type local tcp dport 8080 dnat ip to 172.30.0.2:80 comment \"collocate:abababababab\""
     ));
-    assert!(out.contains("ip daddr != 127.0.0.0/8 fib daddr type local tcp dport 8080 dnat ip to 172.30.0.2:80"));
+    assert!(out.contains("    fib daddr type local tcp dport 8080 dnat ip to 172.30.0.2:80"));
+    assert!(!out.contains("127.0.0.0/8 fib"));
+    assert!(out.contains("ip saddr 127.0.0.0/8 oifname \"collocate0\" masquerade"), "{out}");
     assert!(out.contains("udp dport 5353 dnat ip to 172.30.0.2:53"));
 }
 
