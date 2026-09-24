@@ -27,6 +27,14 @@ impl PullPolicy {
             other => Err(Error::InvalidSpec(format!("invalid pull policy {other:?}, expected missing, always or never"))),
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PullPolicy::Missing => "missing",
+            PullPolicy::Always => "always",
+            PullPolicy::Never => "never",
+        }
+    }
 }
 
 pub fn reference_name(reference: &Reference) -> String {
@@ -102,6 +110,8 @@ pub fn ensure_pulled(reference: &Reference, root: &Path, creds: &dyn Credentials
             Err(Error::NotFound(_)) => pull_and_import(reference, root, creds),
             Err(e) => Err(e),
         },
-        PullPolicy::Never => store.get(&name).map_err(|_| Error::NotFound(format!("image {name} is not present locally and the pull policy is never"))),
+        PullPolicy::Never => {
+            store.get(&name).map_err(|_| Error::NotFound(format!("image {name} is not present locally and the pull policy is never")))
+        }
     }
 }
