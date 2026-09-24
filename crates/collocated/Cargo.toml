@@ -35,11 +35,13 @@ tempfile.workspace = true
 name = "collocated"
 maintainer = "collocate maintainers"
 depends = "nftables, iproute2"
+recommends = "fuse-overlayfs"
 section = "admin"
 priority = "optional"
 extended-description = "The collocate container daemon: one process per container on a shared kernel, cgroup v2 and nftables based."
 assets = [
     ["target/release/collocated", "usr/sbin/collocated", "755"],
+    ["target/release/collocate-init", "usr/libexec/collocate/collocate-init", "755"],
     ["../../packaging/collocated.service", "lib/systemd/system/collocated.service", "644"],
     ["../../packaging/collocated.toml", "etc/collocate/collocated.toml", "644"],
 ]
