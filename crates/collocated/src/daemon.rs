@@ -3,7 +3,9 @@ use crate::health::{http_check, tcp_check, HealthTracker};
 use crate::restart::{restart_delay, should_restart};
 use crate::secrets::SecretStore;
 use collocate_core::id::resolve_ref;
+use collocate_core::layout::Layout;
 use collocate_core::request::{ContainerInfo, ContainerStats, HealthState, LbSpec, LbStatus, LogSource, Request, Response, State};
+use collocate_core::settings::DaemonSettings;
 use collocate_core::spec::{HealthKind, ImageKind, Mount, RootSource, Spec, PEBBLE_BIN};
 use collocate_core::wire::MAX_FRAME;
 use collocate_core::{ContainerId, Error, Result};
@@ -79,6 +81,10 @@ struct Conn {
     fds: VecDeque<OwnedFd>,
 }
 
+pub struct Reexec {
+    pub old_bridge: Option<String>,
+}
+
 struct ExecProc {
     pidfd: OwnedFd,
     conn: u64,
@@ -140,6 +146,10 @@ pub struct Daemon {
     shutdown: bool,
     fw_dirty: bool,
     last_health: Instant,
+    config_path: PathBuf,
+    worker_exe: Option<PathBuf>,
+    workers: Vec<std::process::Child>,
+    reexec: Option<Reexec>,
 }
 
 fn io<T>(r: std::io::Result<T>) -> Result<T> {
@@ -163,10 +173,11 @@ fn lb_key(project: &str, name: &str) -> String {
 }
 
 impl Daemon {
-    pub fn new(cfg: Config) -> Result<Daemon> {
+    pub fn new(mut cfg: Config) -> Result<Daemon> {
         for d in [&cfg.state_dir, &cfg.run_dir] {
             io(fs::create_dir_all(d))?;
         }
+        cfg.init_path = crate::setup::stage_init(&cfg)?;
         let store = NodeStore::open(&cfg.state_dir, &cfg.run_dir)?;
         let lock = store.lock()?;
         store.recover()?;
@@ -245,11 +256,128 @@ impl Daemon {
             shutdown: false,
             fw_dirty: true,
             last_health: Instant::now(),
+            config_path: Layout::detect().config,
+            worker_exe: None,
+            workers: Vec::new(),
+            reexec: None,
         };
         d.load_lbs()?;
         d.reconcile()?;
         d.flush_firewall();
         Ok(d)
+    }
+
+    pub fn set_config_path(&mut self, path: PathBuf) {
+        self.config_path = path;
+    }
+
+    pub fn set_image_worker(&mut self, exe: Option<PathBuf>) {
+        self.worker_exe = exe;
+    }
+
+    pub fn take_reexec(&mut self) -> Option<Reexec> {
+        self.reexec.take()
+    }
+
+    fn op_init(&mut self, conn: u64, settings: DaemonSettings, force: bool) -> Result<Option<Response>> {
+        let stream = &self.conns.get(&conn).ok_or_else(|| Error::Internal("connection vanished".into()))?.stream;
+        crate::standby::require_root(stream)?;
+        crate::standby::require_interfaces()?;
+        if settings == self.cfg.settings() {
+            return Ok(Some(Response::Ok));
+        }
+        crate::setup::check_settings(&settings, Some(&self.cfg))?;
+        let net_changed = settings.subnet != self.cfg.subnet || settings.bridge != self.cfg.bridge;
+        if net_changed {
+            let ids: Vec<ContainerId> = self.store.load_all()?.into_iter().map(|s| s.id).collect();
+            let lbs: Vec<(String, String)> = self.lbs.values().map(|l| (l.project.clone(), l.name.clone())).collect();
+            if (!ids.is_empty() || !lbs.is_empty()) && !force {
+                return Err(Error::Conflict(format!(
+                    "{} containers and {} load balancers exist; changing the subnet or bridge needs --force, which deletes them",
+                    ids.len(),
+                    lbs.len()
+                )));
+            }
+            for id in ids {
+                if self.live.contains_key(&id) {
+                    io(self.cgroups.kill(&id))?;
+                    self.reap_blocking(id);
+                }
+                self.purge(&id)?;
+            }
+            for (project, name) in lbs {
+                self.lbs.remove(&lb_key(&project, &name));
+                let _ = fs::remove_file(self.lb_dir().join(format!("{}.json", lb_key(&project, &name))));
+            }
+        }
+        self.node = self.store.update_node(settings.node_name.as_deref().unwrap_or("local"), &settings.subnet)?;
+        crate::setup::write_config(&self.config_path, &settings)?;
+        log!("configuration updated, restarting");
+        self.reexec = Some(Reexec { old_bridge: net_changed.then(|| self.cfg.bridge.clone()) });
+        self.shutdown = true;
+        Ok(Some(Response::Ok))
+    }
+
+    fn spawn_image_worker(&mut self, conn: u64, req: Request) -> Result<Option<Response>> {
+        use std::os::unix::process::CommandExt;
+        let c = self.conns.get_mut(&conn).ok_or_else(|| Error::Internal("connection vanished".into()))?;
+        let input = if matches!(req, Request::ImageImport) {
+            Some(c.fds.pop_front().ok_or_else(|| Error::Invalid("image import needs an archive file descriptor".into()))?)
+        } else {
+            None
+        };
+        let Some(exe) = self.worker_exe.clone() else {
+            return crate::images::handle_worker(&self.cfg.state_dir, req, input.map(fs::File::from)).map(Some);
+        };
+        let sock: OwnedFd = io(c.stream.try_clone())?.into();
+        let mut payload = Vec::new();
+        collocate_core::wire::write_frame(&mut payload, &req)?;
+        let sock_raw = sock.as_raw_fd();
+        let input_raw = input.as_ref().map(|f| f.as_raw_fd());
+        let mut cmd = Command::new(exe);
+        cmd.arg("--image-worker").arg("--state-dir").arg(&self.cfg.state_dir).stdin(Stdio::piped()).stdout(Stdio::null());
+        if input.is_some() {
+            cmd.arg("--with-input");
+        }
+        unsafe {
+            cmd.pre_exec(move || {
+                let s = libc::fcntl(sock_raw, libc::F_DUPFD, 10);
+                if s < 0 || libc::dup2(s, crate::images::WORKER_SOCKET_FD) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if let Some(r) = input_raw {
+                    let i = libc::fcntl(r, libc::F_DUPFD, 10);
+                    if i < 0 || libc::dup2(i, crate::images::WORKER_INPUT_FD) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+        let mut child = io(cmd.spawn())?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(&payload);
+        }
+        self.workers.push(child);
+        drop(sock);
+        drop(input);
+        Ok(None)
+    }
+
+    fn reap_workers(&mut self) {
+        self.workers.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
+    }
+
+    fn op_controller_set(&self, compose: &str) -> Result<()> {
+        let path = Layout::detect().controller_file;
+        if let Some(dir) = path.parent() {
+            io(fs::create_dir_all(dir))?;
+        }
+        let tmp = path.with_extension("yaml.new");
+        io(fs::write(&tmp, compose))?;
+        io(fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644)))?;
+        io(fs::rename(&tmp, &path))?;
+        Ok(())
     }
 
     fn token(&mut self) -> u64 {
@@ -708,7 +836,8 @@ impl Daemon {
         let mut new_layers = layers.clone();
         new_layers.push(diff_id);
         let meta_digest = collocate_image::commit::synthetic_digest(&new_layers, &config)?;
-        let meta = collocate_image::config::ImageMeta { name: image.to_string(), digest: meta_digest.clone(), layers: new_layers, config, kind };
+        let meta =
+            collocate_image::config::ImageMeta { name: image.to_string(), digest: meta_digest.clone(), layers: new_layers, config, kind };
         store.put(&meta)?;
         Ok(meta_digest)
     }
@@ -802,8 +931,13 @@ impl Daemon {
                 RootMode::FuseOverlay => "fuse-overlay",
                 RootMode::BindRo => "bind-ro",
             },
+            "initialized": true,
             "subnet": self.cfg.subnet,
             "bridge": self.cfg.bridge,
+            "group": self.cfg.group,
+            "state_dir": self.cfg.state_dir,
+            "settings": self.cfg.settings(),
+            "interfaces": crate::standby::interfaces_json(),
             "node_uuid": self.node.node_uuid,
             "node": self.node.name,
             "running": self.live.len(),
@@ -978,6 +1112,12 @@ impl Daemon {
                 Ok(Some(Response::Lbs(list)))
             }
             Request::Info => Ok(Some(Response::Text { text: self.info() })),
+            Request::Init { settings, force } => self.op_init(conn, settings, force),
+            r @ (Request::ImagePull { .. } | Request::ImageImport) => self.spawn_image_worker(conn, r),
+            r @ (Request::ImageList | Request::ImageShow { .. } | Request::ImageDelete { .. } | Request::ImagePrune) => {
+                crate::images::handle_inline(&self.cfg.state_dir, r).map(Some)
+            }
+            Request::ControllerSet { compose } => self.op_controller_set(&compose).map(|_| Some(Response::Ok)),
             Request::Shutdown => {
                 self.shutdown = true;
                 Ok(Some(Response::Ok))
@@ -1337,6 +1477,7 @@ impl Daemon {
     }
 
     fn on_timer(&mut self) {
+        self.reap_workers();
         let now = Instant::now();
         let mut due = Vec::new();
         let mut i = 0;
