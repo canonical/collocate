@@ -47,24 +47,24 @@ fn state_word(s: State) -> &'static str {
     }
 }
 
-fn json<T: serde::Serialize>(v: &T) {
+pub(crate) fn json<T: serde::Serialize>(v: &T) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
 }
 
-fn narrate(cli: &Cli, message: &str) {
+pub(crate) fn narrate(cli: &Cli, message: &str) {
     output::narrate(cli.verbosity(), Verbosity::Brief, message);
 }
 
-fn narrate_detail(cli: &Cli, message: &str) {
+pub(crate) fn narrate_detail(cli: &Cli, message: &str) {
     output::narrate(cli.verbosity(), Verbosity::Verbose, message);
 }
 
-fn abort() -> i32 {
+pub(crate) fn abort() -> i32 {
     eprintln!("Aborted.");
     1
 }
 
-fn confirm_action(cli: &Cli, prompt: &str) -> Result<bool> {
+pub(crate) fn confirm_action(cli: &Cli, prompt: &str) -> Result<bool> {
     confirm(prompt, false, cli.yes)
 }
 
@@ -108,7 +108,7 @@ fn wait_status(cli: &Cli, target: &str) -> Result<i32> {
     }
 }
 
-fn read_stdin() -> Result<String> {
+pub(crate) fn read_stdin() -> Result<String> {
     let mut s = String::new();
     std::io::stdin().read_to_string(&mut s)?;
     Ok(s.trim_end_matches(['\n', '\r']).to_string())
@@ -503,22 +503,39 @@ pub fn run(cli: &Cli) -> Result<i32> {
         Command::Doctor => {
             let local = collocate_sys::probe::probe();
             let mut failed = local.checks.iter().any(|c| !c.ok);
-            let daemon_info = call(cli, Request::Info);
-            if daemon_info.is_err() {
+            let daemon_info = match call(cli, Request::Info) {
+                Ok(Response::Text { text }) => Ok(serde_json::from_str::<serde_json::Value>(&text).unwrap_or(serde_json::Value::Null)),
+                Ok(other) => Err(Error::Internal(format!("unexpected response {other:?}"))),
+                Err(e) => Err(e),
+            };
+            let initialized = daemon_info.as_ref().ok().and_then(|v| v["initialized"].as_bool());
+            let missing = daemon_info.as_ref().map(crate::init::missing_plugs).unwrap_or_default();
+            if daemon_info.is_err() || initialized == Some(false) || !missing.is_empty() {
                 failed = true;
             }
             if cli.format == Format::Json {
                 let checks: Vec<serde_json::Value> =
                     local.checks.iter().map(|c| serde_json::json!({"name": c.name, "ok": c.ok, "detail": c.detail})).collect();
-                json(&serde_json::json!({"checks": checks, "daemon_reachable": daemon_info.is_ok()}));
+                json(&serde_json::json!({
+                    "checks": checks,
+                    "daemon_reachable": daemon_info.is_ok(),
+                    "initialized": initialized,
+                    "missing_interfaces": missing,
+                }));
             } else {
                 for c in &local.checks {
                     println!("{:<20} {}  {}", c.name, if c.ok { "ok " } else { "FAIL" }, c.detail);
                 }
-                match daemon_info {
-                    Ok(Response::Text { text }) => println!("daemon: reachable ({text})"),
-                    Ok(_) => {}
+                match &daemon_info {
+                    Ok(v) if initialized == Some(false) => println!("daemon: reachable, not initialized; run 'sudo collocate init' ({v})"),
+                    Ok(v) => println!("daemon: reachable ({v})"),
                     Err(e) => println!("daemon: {e}"),
+                }
+                for cmd in collocate_core::layout::connect_commands("collocate", &missing) {
+                    println!("interface missing: {cmd}");
+                }
+                if !missing.is_empty() {
+                    println!("note: checks above can fail until the missing interfaces are connected");
                 }
             }
             Ok(i32::from(failed))
