@@ -1,5 +1,6 @@
 use crate::id::ContainerId;
 use crate::net::{Algorithm, NoBackends, Proto};
+use crate::settings::DaemonSettings;
 use crate::spec::{ImageKind, Spec};
 use crate::Error;
 use serde::{Deserialize, Serialize};
@@ -85,6 +86,13 @@ pub struct LbStatus {
     pub spec: LbSpec,
     pub vip: Ipv4Addr,
     pub backends: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistryCredential {
+    pub registry: String,
+    pub username: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -182,17 +190,52 @@ pub enum Request {
     LbList,
     Info,
     Shutdown,
+    Init {
+        settings: DaemonSettings,
+        #[serde(default)]
+        force: bool,
+    },
+    ImagePull {
+        reference: String,
+        policy: String,
+        #[serde(default)]
+        credentials: Vec<RegistryCredential>,
+    },
+    ImageImport,
+    ImageList,
+    ImageShow {
+        name: String,
+    },
+    ImageDelete {
+        name: String,
+    },
+    ImagePrune,
+    ControllerSet {
+        compose: String,
+    },
+}
+
+impl Request {
+    pub fn allowed_uninitialized(&self) -> bool {
+        matches!(self, Request::Info | Request::Init { .. } | Request::Shutdown)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum Response {
     Ok,
-    Id { id: ContainerId },
+    Id {
+        id: ContainerId,
+    },
     Containers(Vec<ContainerInfo>),
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Names(Vec<String>),
-    Exit { status: i32 },
+    Exit {
+        status: i32,
+    },
     Log {
         data: String,
         next_offset: u64,
@@ -202,7 +245,13 @@ pub enum Response {
     Stats(Vec<ContainerStats>),
     Lbs(Vec<LbStatus>),
     Accepted,
-    Error { code: i32, message: String },
+    Json {
+        value: serde_json::Value,
+    },
+    Error {
+        code: i32,
+        message: String,
+    },
 }
 
 impl Response {
