@@ -3,3 +3,4 @@ pub mod daemon;
 pub mod health;
 pub mod restart;
 pub mod secrets;
+pub mod setup;
