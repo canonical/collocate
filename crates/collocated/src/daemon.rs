@@ -2,6 +2,7 @@ use crate::config::{Config, RootModeSetting};
 use crate::health::{http_check, tcp_check, HealthTracker};
 use crate::restart::{restart_delay, should_restart};
 use crate::secrets::SecretStore;
+use collocate_core::auth::Caller;
 use collocate_core::id::resolve_ref;
 use collocate_core::layout::Layout;
 use collocate_core::request::{ContainerInfo, ContainerStats, HealthState, LbSpec, LbStatus, LogSource, Request, Response, State};
@@ -261,6 +262,11 @@ impl Daemon {
             workers: Vec::new(),
             reexec: None,
         };
+        if d.cfg.https_address.is_some() {
+            if let Err(e) = crate::remote::ensure_identity(&d.cfg) {
+                log!("cannot create the server certificate: {e}");
+            }
+        }
         d.load_lbs()?;
         d.reconcile()?;
         d.flush_firewall();
@@ -283,7 +289,18 @@ impl Daemon {
         let stream = &self.conns.get(&conn).ok_or_else(|| Error::Internal("connection vanished".into()))?.stream;
         crate::standby::require_root(stream)?;
         crate::standby::require_interfaces()?;
-        if settings == self.cfg.settings() {
+        let mut without_https = settings.clone();
+        without_https.https_address = self.cfg.https_address.clone();
+        if without_https == self.cfg.settings() {
+            if settings.https_address != self.cfg.https_address {
+                settings.validate()?;
+                crate::setup::write_config(&self.config_path, &settings)?;
+                self.cfg.https_address = settings.https_address.clone();
+                if self.cfg.https_address.is_some() {
+                    crate::remote::ensure_identity(&self.cfg)?;
+                }
+                log!("remote access {}", self.cfg.https_address.as_deref().map_or("disabled".to_string(), |a| format!("set to {a}")));
+            }
             return Ok(Some(Response::Ok));
         }
         crate::setup::check_settings(&settings, Some(&self.cfg))?;
@@ -366,6 +383,39 @@ impl Daemon {
 
     fn reap_workers(&mut self) {
         self.workers.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
+    }
+
+    fn op_as(&mut self, conn: u64, caller: Caller, req: Request) -> Result<Option<Response>> {
+        let stream = &self.conns.get(&conn).ok_or_else(|| Error::Internal("connection vanished".into()))?.stream;
+        crate::standby::require_root(stream).map_err(|_| Error::Denied("only the collocate gateway can act for remote callers".into()))?;
+        let access = req.access();
+        let verb = req.verb();
+        let filter = crate::remote::authorize(&caller, &verb, &access, &mut |t| {
+            let id = self.resolve(t)?;
+            Ok(self.store.get(&id)?.labels.project)
+        })?;
+        if crate::remote::audited(&access) {
+            log!("remote {}: {verb}", caller.short());
+        }
+        let resp = self.handle(conn, req)?;
+        Ok(if filter { resp.map(|r| crate::remote::filter_response(r, &caller)) } else { resp })
+    }
+
+    fn op_config_put(&self, project: &str, name: &str, content: &str) -> Result<String> {
+        let ok = |s: &str| {
+            !s.is_empty() && s != "." && s != ".." && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        };
+        if !ok(project) || !ok(name) {
+            return Err(Error::Invalid(format!("invalid config name {project}/{name}")));
+        }
+        let dir = self.cfg.state_dir.join("configs").join(project);
+        io(fs::create_dir_all(&dir))?;
+        let path = dir.join(name);
+        let tmp = dir.join(format!(".{name}.tmp"));
+        io(fs::write(&tmp, content))?;
+        io(fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644)))?;
+        io(fs::rename(&tmp, &path))?;
+        Ok(path.to_string_lossy().into_owned())
     }
 
     fn op_controller_set(&self, compose: &str) -> Result<()> {
@@ -939,6 +989,8 @@ impl Daemon {
             "state_dir": self.cfg.state_dir,
             "settings": self.cfg.settings(),
             "interfaces": crate::standby::interfaces_json(),
+            "https_address": self.cfg.https_address,
+            "server_fingerprint": crate::remote::server_fingerprint(&self.cfg),
             "node_uuid": self.node.node_uuid,
             "node": self.node.name,
             "running": self.live.len(),
@@ -1119,6 +1171,28 @@ impl Daemon {
                 crate::images::handle_inline(&self.cfg.state_dir, r).map(Some)
             }
             Request::ControllerSet { compose } => self.op_controller_set(&compose).map(|_| Some(Response::Ok)),
+            Request::ConfigPut { project, name, content } => {
+                self.op_config_put(&project, &name, &content).map(|path| Some(Response::Text { text: path }))
+            }
+            Request::As { caller, request } => self.op_as(conn, caller, *request),
+            r @ (Request::TrustEnroll { .. } | Request::TrustLookup { .. }) => {
+                let stream = &self.conns.get(&conn).ok_or_else(|| Error::Internal("connection vanished".into()))?.stream;
+                crate::standby::require_root(stream)?;
+                let enroll = matches!(r, Request::TrustEnroll { .. });
+                let resp = crate::remote::handle_trust(&self.cfg, r)?;
+                if enroll {
+                    if let Response::Json { value } = &resp {
+                        log!("trusted {} with the {} role", value["name"].as_str().unwrap_or("?"), value["role"].as_str().unwrap_or("?"));
+                    }
+                }
+                Ok(Some(resp))
+            }
+            r @ (Request::TrustTokenCreate { .. }
+            | Request::TrustTokenList
+            | Request::TrustTokenRevoke { .. }
+            | Request::TrustList
+            | Request::TrustRemove { .. }
+            | Request::TrustAddCertificate { .. }) => crate::remote::handle_trust(&self.cfg, r).map(Some),
             Request::Shutdown => {
                 self.shutdown = true;
                 Ok(Some(Response::Ok))

@@ -21,6 +21,7 @@ collocate-net.workspace = true
 collocate-runtime.workspace = true
 collocate-image.workspace = true
 collocate-registry.workspace = true
+collocate-trust.workspace = true
 collocate-pebble.workspace = true
 serde.workspace = true
 serde_json.workspace = true
