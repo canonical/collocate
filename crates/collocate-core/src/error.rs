@@ -34,6 +34,12 @@ pub enum Error {
     Unreachable(String),
     #[error("internal error: {0}")]
     Internal(String),
+    #[error("{0}")]
+    NotInitialized(String),
+    #[error("permission denied: {0}")]
+    Denied(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
 }
 
 impl Error {
@@ -50,7 +56,10 @@ impl Error {
             | Error::Conflict(s)
             | Error::Timeout(s)
             | Error::Unreachable(s)
-            | Error::Internal(s) => s.clone(),
+            | Error::Internal(s)
+            | Error::NotInitialized(s)
+            | Error::Denied(s)
+            | Error::Forbidden(s) => s.clone(),
             Error::FrameTooLarge(n) => n.to_string(),
             Error::Eof => String::new(),
             Error::Io(e) => e.to_string(),
@@ -72,6 +81,9 @@ impl Error {
             Error::Unreachable(_) | Error::Eof => 4,
             Error::Conflict(_) => 5,
             Error::Timeout(_) => 6,
+            Error::NotInitialized(_) => 7,
+            Error::Denied(_) => 8,
+            Error::Forbidden(_) => 9,
             _ => 1,
         }
     }
