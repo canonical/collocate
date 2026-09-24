@@ -116,3 +116,14 @@ pub fn reset_signal_state() {
         }
     }
 }
+
+pub fn peer_uid(fd: i32) -> io::Result<u32> {
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc =
+        unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_PEERCRED, &mut cred as *mut libc::ucred as *mut libc::c_void, &mut len) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(cred.uid)
+}
