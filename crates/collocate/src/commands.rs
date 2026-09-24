@@ -74,13 +74,14 @@ fn table_opts(columns: &[String], no_headers: bool, no_truncate: bool) -> TableO
 
 fn follow_logs(cli: &Cli, target: &str, until_exit: bool, tail: Option<usize>, services: &[String], raw: bool) -> Result<()> {
     let first = LogSource::from_flags(raw, services);
-    let (mut offset, source) = match call(cli, Request::Logs { target: target.into(), tail, offset: None, source: first, services: services.to_vec() })? {
-        Response::Log { data, next_offset, source } => {
-            print!("{data}");
-            (next_offset, source)
-        }
-        _ => (0, first),
-    };
+    let (mut offset, source) =
+        match call(cli, Request::Logs { target: target.into(), tail, offset: None, source: first, services: services.to_vec() })? {
+            Response::Log { data, next_offset, source } => {
+                print!("{data}");
+                (next_offset, source)
+            }
+            _ => (0, first),
+        };
     loop {
         let running = containers(cli, true, None)?
             .iter()
@@ -245,9 +246,8 @@ fn build_lb_spec(a: &LoadBalancerArgs) -> Result<LbSpec> {
 pub fn run(cli: &Cli) -> Result<i32> {
     match &cli.command {
         Command::Run(a) => {
-            let store = collocate_image::config::ImageStore::new(&cli.state_dir);
             let spec = build_spec(a, host_series(), &|k| std::env::var(k).ok(), &|p| Ok(std::fs::read_to_string(p)?), &|n| {
-                lookup_or_pull(&store, &cli.state_dir, n)
+                lookup_or_pull(cli, n)
             })?;
             let id = match call(cli, Request::Run(Box::new(spec)))? {
                 Response::Id { id } => id,
@@ -372,8 +372,6 @@ pub fn run(cli: &Cli) -> Result<i32> {
         }
         Command::Exec { env, user, workdir, timeout, service, target, command } => {
             let envs = env.iter().filter_map(|e| e.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))).collect();
-            let mut c = connect(cli)?;
-            let (i, o, e) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
             let req = Request::Exec {
                 target: target.clone(),
                 argv: command.clone(),
@@ -384,6 +382,13 @@ pub fn run(cli: &Cli) -> Result<i32> {
                 timeout_secs: *timeout,
                 service: service.clone(),
             };
+            if let Some(status) = crate::transport::with_remote_api(cli, |api| {
+                api.exec(&req, Box::new(std::io::stdin()), &mut std::io::stdout(), &mut std::io::stderr())
+            })? {
+                return Ok(status);
+            }
+            let mut c = crate::transport::local(cli)?;
+            let (i, o, e) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
             c.send_with_fds(&req, &[&i.as_raw_fd(), &o.as_raw_fd(), &e.as_raw_fd()])?;
             match c.read_response()? {
                 Response::Exit { status } => Ok(status),
@@ -607,8 +612,24 @@ fn parse_cp_endpoint(s: &str) -> CpEndpoint {
 }
 
 fn cp_exec(cli: &Cli, target: &str, argv: Vec<String>, stdin: &std::fs::File, stdout: &std::fs::File) -> Result<i32> {
-    let mut c = connect(cli)?;
-    let req = Request::Exec { target: target.to_string(), argv, env: vec![], user: None, workdir: None, tty: false, timeout_secs: None, service: None };
+    let req = Request::Exec {
+        target: target.to_string(),
+        argv,
+        env: vec![],
+        user: None,
+        workdir: None,
+        tty: false,
+        timeout_secs: None,
+        service: None,
+    };
+    if let Some(status) = crate::transport::with_remote_api(cli, |api| {
+        let input = stdin.try_clone()?;
+        let mut output = stdout.try_clone()?;
+        api.exec(&req, Box::new(input), &mut output, &mut std::io::sink())
+    })? {
+        return Ok(status);
+    }
+    let mut c = crate::transport::local(cli)?;
     let stderr = std::fs::File::open("/dev/null")?;
     c.send_with_fds(&req, &[&stdin.as_raw_fd(), &stdout.as_raw_fd(), &stderr.as_raw_fd()])?;
     match c.read_response()? {
@@ -626,7 +647,7 @@ fn cp(cli: &Cli, src: &str, dst: &str) -> Result<i32> {
         }
         (CpEndpoint::Local(local), CpEndpoint::Remote { target, path }) => {
             let stdin = std::fs::File::open(&local)?;
-            let stdout = std::fs::File::open("/dev/null")?;
+            let stdout = std::fs::OpenOptions::new().write(true).open("/dev/null")?;
             cp_exec(cli, &target, vec!["tee".into(), path], &stdin, &stdout)
         }
         (CpEndpoint::Local(_), CpEndpoint::Local(_)) => {
@@ -698,37 +719,41 @@ fn load_balancer(cli: &Cli, cmd: &LoadBalancerCmd) -> Result<i32> {
     }
 }
 
-struct CliCredentials {
-    username: Option<String>,
-    password: Option<String>,
-}
-
-impl collocate_registry::auth::Credentials for CliCredentials {
-    fn for_registry(&self, _registry: &str) -> Option<(String, String)> {
-        Some((self.username.clone()?, self.password.clone().unwrap_or_default()))
+fn image_json<T: serde::de::DeserializeOwned>(resp: Response) -> Result<T> {
+    match resp {
+        Response::Json { value } => Ok(serde_json::from_value(value)?),
+        other => Err(Error::Internal(format!("unexpected response {other:?}"))),
     }
 }
 
-fn lookup_or_pull(store: &collocate_image::config::ImageStore, state_dir: &Path, name: &str) -> Result<ImageMeta> {
-    match store.get(name) {
-        Err(Error::NotFound(_)) => {
-            let Ok(reference) = collocate_registry::Reference::parse(name) else { return store.get(name) };
-            let creds = CliCredentials { username: None, password: None };
-            collocate_image::pull::ensure_pulled(&reference, state_dir, &creds, PullPolicy::Missing)
+fn lookup_or_pull(cli: &Cli, name: &str) -> Result<ImageMeta> {
+    match call(cli, Request::ImageShow { name: name.to_string() }) {
+        Err(Error::NotFound(_)) if collocate_registry::Reference::parse(name).is_ok() => {
+            narrate(cli, &format!("Pulling {name}..."));
+            let mut c = crate::transport::api(cli)?;
+            collocate_compose::up::pull_image(c.as_mut(), name, PullPolicy::Missing, Vec::new())
         }
-        other => other,
+        other => image_json(other?),
     }
+}
+
+fn import_image(cli: &Cli, file: &Path) -> Result<Vec<ImageMeta>> {
+    let mut reader = crate::transport::ArchiveReader::open(file)?;
+    if let Some(resp) = crate::transport::with_remote_api(cli, |api| {
+        let length = reader.length();
+        api.import(&mut reader, length)
+    })? {
+        return image_json(resp);
+    }
+    let mut c = crate::transport::local(cli)?;
+    c.send_with_fds(&Request::ImageImport, &[&reader.as_raw_fd()])?;
+    image_json(c.read_response()?)
 }
 
 fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
-    let store = collocate_image::config::ImageStore::new(&cli.state_dir);
     match cmd {
         ImageCmd::Import { file } => {
-            let imported = if file == Path::new("-") {
-                collocate_image::import::import_archive(std::io::stdin(), &cli.state_dir)?
-            } else {
-                collocate_image::import::import_archive(std::fs::File::open(file)?, &cli.state_dir)?
-            };
+            let imported = import_image(cli, file)?;
             if cli.format == Format::Json {
                 json(&imported);
             } else {
@@ -744,10 +769,18 @@ fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
             Ok(0)
         }
         ImageCmd::Pull { reference, username, password_stdin } => {
-            let reference = collocate_registry::Reference::parse(reference).map_err(|e| Error::Invalid(e.to_string()))?;
+            let parsed = collocate_registry::Reference::parse(reference).map_err(|e| Error::Invalid(e.to_string()))?;
             let password = if *password_stdin { Some(read_stdin()?) } else { None };
-            let creds = CliCredentials { username: username.clone(), password };
-            let meta = collocate_image::pull::ensure_pulled(&reference, &cli.state_dir, &creds, PullPolicy::Always)?;
+            let credentials = match username {
+                Some(u) => vec![collocate_core::request::RegistryCredential {
+                    registry: parsed.registry.clone(),
+                    username: u.clone(),
+                    password: password.unwrap_or_default(),
+                }],
+                None => Vec::new(),
+            };
+            let mut c = crate::transport::api(cli)?;
+            let meta = collocate_compose::up::pull_image(c.as_mut(), reference, PullPolicy::Always, credentials)?;
             if cli.format == Format::Json {
                 json(&meta);
             } else {
@@ -756,7 +789,7 @@ fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
             Ok(0)
         }
         ImageCmd::List => {
-            let list = store.list()?;
+            let list: Vec<ImageMeta> = image_json(call(cli, Request::ImageList)?)?;
             if cli.format == Format::Json {
                 json(&list);
             } else if list.is_empty() {
@@ -771,7 +804,7 @@ fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
             Ok(0)
         }
         ImageCmd::Show { name } => {
-            let m = store.get(name)?;
+            let m: ImageMeta = image_json(call(cli, Request::ImageShow { name: name.clone() })?)?;
             if cli.format == Format::Json {
                 json(&m);
             } else {
@@ -783,7 +816,7 @@ fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
             if !confirm_action(cli, &format!("Delete image {name}?"))? {
                 return Ok(abort());
             }
-            store.remove(name)?;
+            call(cli, Request::ImageDelete { name: name.clone() })?;
             narrate(cli, &success_line("Deleted", name));
             Ok(0)
         }
@@ -791,7 +824,7 @@ fn image(cli: &Cli, cmd: &ImageCmd) -> Result<i32> {
             if !confirm_action(cli, "Prune unreferenced image layers?")? {
                 return Ok(abort());
             }
-            let removed = store.gc()?;
+            let removed: Vec<String> = image_json(call(cli, Request::ImagePrune)?)?;
             if cli.format == Format::Json {
                 json(&removed);
             } else if removed.is_empty() {
