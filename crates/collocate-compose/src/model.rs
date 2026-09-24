@@ -374,7 +374,7 @@ impl ComposeFile {
                 return invalid(format!("service {name}: replicas must be at least 1"));
             }
             if let Some(n) = &s.node {
-                if !self.nodes.contains_key(n) {
+                if !self.nodes.is_empty() && !self.nodes.contains_key(n) {
                     return invalid(format!("service {name} uses unknown node {n}"));
                 }
             }

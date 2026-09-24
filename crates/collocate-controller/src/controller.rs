@@ -186,7 +186,7 @@ impl Controller {
         };
         for svc in order {
             let file_def = self.file.services[&svc].clone();
-            let file_rev = state.spec(&self.file, &self.opts, &svc, 0)?.labels.revision.unwrap_or_default();
+            let file_rev = state.spec(api, &self.file, &self.opts, &svc, 0)?.labels.revision.unwrap_or_default();
             let rejected = self.rejected.get(&svc).is_some_and(|r| *r == file_rev);
             match self.applied.get(&svc) {
                 None => {
@@ -236,7 +236,7 @@ impl Controller {
                 match action {
                     Action::Start { index, revision } => {
                         let eff = self.effective_file(&svc);
-                        let spec = state.spec(&eff, &self.opts, &svc, index)?;
+                        let spec = state.spec(api, &eff, &self.opts, &svc, index)?;
                         if spec.labels.revision.as_deref() != Some(revision.as_str()) {
                             continue;
                         }

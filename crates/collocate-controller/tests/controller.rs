@@ -168,7 +168,6 @@ fn opts() -> UpOptions {
     UpOptions {
         subnet: "172.30.0.0/16".into(),
         base_dir: std::env::temp_dir(),
-        state_dir: std::env::temp_dir(),
         regenerate_secrets: None,
         dry_run: false,
         ready_timeout: Duration::from_secs(1),

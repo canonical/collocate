@@ -2,13 +2,14 @@ use collocate_compose::model::ComposeFile;
 use collocate_compose::up::UpOptions;
 use collocate_controller::controller::Controller;
 use collocate_core::client::{Api, Client};
+use collocate_core::layout::Layout;
 use collocate_core::request::{Request, Response};
 use collocate_core::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn usage() -> ! {
-    eprintln!("usage: collocate-controller [-f FILE] [--host SOCKET] [--state-dir DIR] [--interval SECONDS]");
+    eprintln!("usage: collocate-controller [-f FILE] [--host SOCKET] [--interval SECONDS]");
     std::process::exit(2);
 }
 
@@ -30,12 +31,38 @@ fn subnet(api: &mut dyn Api) -> Result<String> {
     }
 }
 
-fn run(path: PathBuf, host: PathBuf, state_dir: PathBuf, interval: Duration) -> Result<()> {
-    let mut client = Client::connect(&host)?;
+fn initialized(api: &mut dyn Api) -> bool {
+    match api.call(Request::Info) {
+        Ok(Response::Text { text }) => {
+            serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|v| v["initialized"].as_bool()).unwrap_or(true)
+        }
+        _ => false,
+    }
+}
+
+fn wait_ready(path: &Path, host: &Path, interval: Duration) -> Client<std::os::unix::net::UnixStream> {
+    let mut announced = false;
+    loop {
+        if path.is_file() {
+            if let Ok(mut c) = Client::connect(host) {
+                if initialized(&mut c) {
+                    return c;
+                }
+            }
+        }
+        if !announced {
+            eprintln!("collocate-controller: waiting for {} and an initialized daemon at {}", path.display(), host.display());
+            announced = true;
+        }
+        std::thread::sleep(interval.max(Duration::from_secs(5)));
+    }
+}
+
+fn run(path: PathBuf, host: PathBuf, interval: Duration) -> Result<()> {
+    let mut client = wait_ready(&path, &host, interval);
     let opts = UpOptions {
         subnet: subnet(&mut client)?,
         base_dir: path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf),
-        state_dir,
         regenerate_secrets: None,
         dry_run: false,
         ready_timeout: Duration::from_secs(30),
@@ -63,11 +90,11 @@ fn run(path: PathBuf, host: PathBuf, state_dir: PathBuf, interval: Duration) -> 
             }
             Err(Error::Unreachable(m)) => {
                 eprintln!("collocate-controller: daemon connection lost: {m}");
-                client = Client::connect(&host)?;
+                client = wait_ready(&path, &host, interval);
             }
             Err(Error::Eof) => {
                 eprintln!("collocate-controller: daemon closed the connection, reconnecting");
-                client = Client::connect(&host)?;
+                client = wait_ready(&path, &host, interval);
             }
             Err(e) => eprintln!("collocate-controller: {e}"),
         }
@@ -76,21 +103,20 @@ fn run(path: PathBuf, host: PathBuf, state_dir: PathBuf, interval: Duration) -> 
 }
 
 fn main() {
-    let mut file = PathBuf::from("collocate-compose.yaml");
-    let mut host = PathBuf::from("/run/collocate/collocate.sock");
-    let mut state_dir = PathBuf::from("/var/lib/collocate");
+    let layout = Layout::detect();
+    let mut file = layout.controller_file.clone();
+    let mut host = layout.socket();
     let mut interval = 2u64;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "-f" | "--file" => file = args.next().map(PathBuf::from).unwrap_or_else(|| usage()),
             "--host" => host = args.next().map(PathBuf::from).unwrap_or_else(|| usage()),
-            "--state-dir" => state_dir = args.next().map(PathBuf::from).unwrap_or_else(|| usage()),
             "--interval" => interval = args.next().and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()),
             _ => usage(),
         }
     }
-    if let Err(e) = run(file, host, state_dir, Duration::from_secs(interval.max(1))) {
+    if let Err(e) = run(file, host, Duration::from_secs(interval.max(1))) {
         eprintln!("collocate-controller: {e}");
         std::process::exit(e.exit_code());
     }

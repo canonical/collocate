@@ -72,7 +72,7 @@ fn unknown_references_are_rejected() {
     assert!(err(&dep).contains("ghost"));
     let sec = MINI.replace("    command", "    secrets: [nope]\n    command");
     assert!(err(&sec).contains("nope"));
-    let node = MINI.replace("    command", "    node: nowhere\n    command");
+    let node = MINI.replace("services:", "nodes:\n  edge-1: {}\nservices:").replace("    command", "    node: nowhere\n    command");
     assert!(err(&node).contains("nowhere"));
     let cfg = MINI.replace("    command", "    configs:\n      missing: /x\n    command");
     assert!(err(&cfg).contains("missing"));
@@ -150,4 +150,12 @@ fn pebble_healthchecks_need_a_valid_level_and_an_image() {
     assert!(load(&format!("{img}      pebble: sometimes\n")).is_err());
     assert!(load(&format!("{img}      pebble: ready\n      tcp: 80\n")).is_err());
     assert!(load(&format!("{MINI}    healthcheck:\n      pebble: ready\n")).is_err());
+}
+
+#[test]
+fn node_references_are_checked_only_against_declared_nodes() {
+    let pinned = "version: 1\nproject: p\nservices:\n  a:\n    series: \"24.04\"\n    node: edge-1\n";
+    assert!(collocate_compose::model::ComposeFile::load(pinned).is_ok());
+    let declared = "version: 1\nproject: p\nnodes:\n  edge-2: {}\nservices:\n  a:\n    series: \"24.04\"\n    node: edge-1\n";
+    assert!(collocate_compose::model::ComposeFile::load(declared).is_err());
 }

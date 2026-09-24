@@ -4,13 +4,12 @@ use crate::plan::{diff, shutdown_order, topo_order, Actual, Item, Plan};
 use crate::template::{references, resolve, Context, Reference};
 use collocate_core::client::Api;
 use collocate_core::net::Proto;
-use collocate_core::request::{ContainerInfo, HealthState, LbSpec, Request, Response, State};
+use collocate_core::request::{ContainerInfo, HealthState, LbSpec, RegistryCredential, Request, Response, State};
 use collocate_core::spec::{Series, Spec};
 use collocate_core::{Error, Result};
-use collocate_net::ipam::{Ipam, Subnet};
 use collocate_image::config::ImageMeta;
 use collocate_image::pull::PullPolicy;
-use collocate_registry::auth::Credentials;
+use collocate_net::ipam::{Ipam, Subnet};
 use collocate_registry::Reference as OciReference;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -18,21 +17,24 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-struct ComposeCredentials<'a> {
-    registries: &'a BTreeMap<String, RegistryDef>,
-    tctx: &'a Context,
+fn registry_credentials(registries: &BTreeMap<String, RegistryDef>, tctx: &Context) -> Vec<RegistryCredential> {
+    registries
+        .iter()
+        .filter_map(|(host, def)| {
+            Some(RegistryCredential {
+                registry: host.clone(),
+                username: resolve(&def.username, tctx).ok()?,
+                password: resolve(&def.password, tctx).ok()?,
+            })
+        })
+        .collect()
 }
 
-impl Credentials for ComposeCredentials<'_> {
-    fn for_registry(&self, registry: &str) -> Option<(String, String)> {
-        let def = self
-            .registries
-            .iter()
-            .find(|(host, _)| collocate_registry::reference::canonical_registry(host) == registry)
-            .map(|(_, d)| d)?;
-        let user = resolve(&def.username, self.tctx).ok()?;
-        let pass = resolve(&def.password, self.tctx).ok()?;
-        Some((user, pass))
+pub fn pull_image(api: &mut dyn Api, image: &str, policy: PullPolicy, credentials: Vec<RegistryCredential>) -> Result<ImageMeta> {
+    OciReference::parse(image).map_err(|e| Error::Invalid(format!("image {image}: {e}")))?;
+    match api.call(Request::ImagePull { reference: image.to_string(), policy: policy.label().to_string(), credentials })? {
+        Response::Json { value } => Ok(serde_json::from_value(value)?),
+        other => Err(Error::Internal(format!("unexpected response {other:?}"))),
     }
 }
 
@@ -40,7 +42,6 @@ impl Credentials for ComposeCredentials<'_> {
 pub struct UpOptions {
     pub subnet: String,
     pub base_dir: PathBuf,
-    pub state_dir: PathBuf,
     pub regenerate_secrets: Option<Vec<String>>,
     pub dry_run: bool,
     pub ready_timeout: Duration,
@@ -194,37 +195,40 @@ impl BuildState {
         Ok(BuildState { order, ipam, secrets, addresses, lb_vips, forced, images: RefCell::new(HashMap::new()) })
     }
 
-    pub fn spec(&mut self, file: &ComposeFile, opts: &UpOptions, service: &str, idx: u32) -> Result<Spec> {
+    pub fn spec(&mut self, api: &mut dyn Api, file: &ComposeFile, opts: &UpOptions, service: &str, idx: u32) -> Result<Spec> {
         let base = |_: Series| Ok("latest".to_string());
         let tctx = Context { secrets: self.secrets.clone(), addresses: self.addresses.clone(), lb_addresses: self.lb_vips.clone() };
         let registries = file.registries.clone();
-        let state_dir = opts.state_dir.clone();
         let dry_run = opts.dry_run;
         let resolved = &self.images;
+        let api_cell = RefCell::new(api);
         let oci = |image: &str, policy: PullPolicy| -> Result<ImageMeta> {
             if let Some(meta) = resolved.borrow().get(image) {
                 return Ok(meta.clone());
             }
-            let reference = OciReference::parse(image).map_err(|e| Error::Invalid(format!("image {image}: {e}")))?;
-            let creds = ComposeCredentials { registries: &registries, tctx: &tctx };
             let policy = if dry_run { PullPolicy::Never } else { policy };
-            let meta = collocate_image::pull::ensure_pulled(&reference, &state_dir, &creds, policy)?;
+            let meta = pull_image(&mut **api_cell.borrow_mut(), image, policy, registry_credentials(&registries, &tctx))?;
             resolved.borrow_mut().insert(image.to_string(), meta.clone());
             Ok(meta)
         };
         let base_dir = opts.base_dir.clone();
         let dry = opts.dry_run;
         let cfgs = file.configs.clone();
+        let project = file.project.clone();
         let config_path = |name: &str| -> Result<String> {
             let def = cfgs.get(name).ok_or_else(|| Error::NotFound(format!("config {name}")))?;
             let rendered = resolve(&std::fs::read_to_string(base_dir.join(&def.template))?, &tctx)?;
-            let dir = base_dir.join(".collocate").join("rendered");
-            let out = dir.join(name);
-            if !dry {
-                std::fs::create_dir_all(&dir)?;
-                std::fs::write(&out, rendered)?;
+            if dry {
+                return Ok(format!("configs/{project}/{name}"));
             }
-            Ok(out.to_string_lossy().into_owned())
+            match (**api_cell.borrow_mut()).call(Request::ConfigPut {
+                project: project.clone(),
+                name: name.to_string(),
+                content: rendered,
+            })? {
+                Response::Text { text } => Ok(text),
+                other => Err(Error::Internal(format!("unexpected response {other:?}"))),
+            }
         };
         let ctx = BuildCtx {
             secrets: &self.secrets,
@@ -253,7 +257,7 @@ fn prepare(api: &mut dyn Api, file: &ComposeFile, opts: &UpOptions) -> Result<Pr
     let mut specs: BTreeMap<String, Vec<Spec>> = BTreeMap::new();
     for svc in state.order.clone() {
         for idx in 0..file.services[&svc].replicas {
-            specs.entry(svc.clone()).or_default().push(state.spec(file, opts, &svc, idx)?);
+            specs.entry(svc.clone()).or_default().push(state.spec(api, file, opts, &svc, idx)?);
         }
     }
     Ok(Prepared { order: state.order.clone(), specs, lb_vips: state.lb_vips.clone(), forced: state.forced.clone() })

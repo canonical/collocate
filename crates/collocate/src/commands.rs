@@ -133,7 +133,6 @@ fn compose_options(cli: &Cli, a: &ComposeArgs, file: &Path) -> Result<UpOptions>
     Ok(UpOptions {
         subnet,
         base_dir: file.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| std::path::PathBuf::from("."), Path::to_path_buf),
-        state_dir: cli.state_dir.clone(),
         regenerate_secrets: a.regenerate_secrets.as_ref().map(|s| if s.is_empty() { Vec::new() } else { vec![s.clone()] }),
         dry_run: a.dry_run,
         ready_timeout: Duration::from_secs(a.timeout),
@@ -415,8 +414,17 @@ pub fn run(cli: &Cli) -> Result<i32> {
         Command::Node(cmd) => node(cli, cmd),
         Command::Up(a) => {
             let file = ComposeFile::load(&std::fs::read_to_string(&a.file)?)?;
-            let mut c = connect(cli)?;
-            let report = up(&mut c, &file, &compose_options(cli, a, &a.file)?)?;
+            let mut c = crate::transport::api(cli)?;
+            if a.managed && !file.configs.is_empty() {
+                return Err(Error::Invalid(
+                    "--managed does not support configs templates yet; the controller reads the file from its own directory".into(),
+                ));
+            }
+            let report = up(c.as_mut(), &file, &compose_options(cli, a, &a.file)?)?;
+            if a.managed {
+                call(cli, Request::ControllerSet { compose: std::fs::read_to_string(&a.file)? })?;
+                narrate(cli, &format!("The controller now manages project {}.", file.project));
+            }
             if cli.format == Format::Json {
                 json(&report);
             } else {
@@ -438,8 +446,8 @@ pub fn run(cli: &Cli) -> Result<i32> {
         }
         Command::Plan(a) => {
             let file = ComposeFile::load(&std::fs::read_to_string(&a.file)?)?;
-            let mut c = connect(cli)?;
-            let p = plan_only(&mut c, &file, &compose_options(cli, a, &a.file)?)?;
+            let mut c = crate::transport::api(cli)?;
+            let p = plan_only(c.as_mut(), &file, &compose_options(cli, a, &a.file)?)?;
             if cli.format == Format::Json {
                 json(&p);
             } else {
@@ -458,8 +466,8 @@ pub fn run(cli: &Cli) -> Result<i32> {
             if !confirm_action(cli, &format!("Stop and remove every container for project {}?", file.project))? {
                 return Ok(abort());
             }
-            let mut c = connect(cli)?;
-            let removed = down(&mut c, &file, &compose_options(cli, a, &a.file)?)?;
+            let mut c = crate::transport::api(cli)?;
+            let removed = down(c.as_mut(), &file, &compose_options(cli, a, &a.file)?)?;
             if cli.format == Format::Json {
                 json(&removed);
             } else if removed.is_empty() {
