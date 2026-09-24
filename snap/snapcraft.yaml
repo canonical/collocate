@@ -1,0 +1,117 @@
+name: collocate
+base: core26
+adopt-info: collocate
+summary: Lightweight containers on a shared kernel
+description: |
+  collocate runs containers and compose projects with one process per
+  container, copy-on-write roots, cgroup v2 limits and an nftables network,
+  either on this machine or across LXD instances.
+
+  After installing, connect the interfaces the daemon needs and run
+  `sudo collocate init`.
+license: Apache-2.0
+grade: stable
+confinement: strict
+
+platforms:
+  amd64:
+  arm64:
+
+environment:
+  LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
+  LXD_DIR: /var/snap/lxd/common/lxd
+  LXD_CONF: $SNAP_COMMON/lxc
+
+plugs:
+  docker-privileged:
+    interface: docker-support
+    privileged-containers: true
+  home-all:
+    interface: home
+    read: all
+
+apps:
+  collocate:
+    command: bin/collocate
+    completer: share/bash-completion/completions/collocate
+    plugs: [home, home-all, network, lxd, removable-media]
+  relay:
+    command: bin/collocate-relay
+  daemon:
+    command: bin/collocated
+    daemon: simple
+    restart-condition: on-failure
+    plugs:
+      - docker-privileged
+      - network
+      - network-bind
+      - network-control
+      - firewall-control
+      - fuse-support
+      - system-observe
+      - mount-observe
+      - process-control
+  controller:
+    command: bin/collocate-controller
+    daemon: simple
+    restart-condition: on-failure
+    after: [daemon]
+  gateway:
+    command: bin/collocate-gateway
+    daemon: simple
+    restart-condition: on-failure
+    after: [daemon]
+    plugs: [network, network-bind]
+
+hooks:
+  install: {}
+  remove:
+    plugs: [docker-privileged, network-control, firewall-control, process-control]
+
+parts:
+  collocate:
+    plugin: nil
+    source: .
+    source-type: local
+    build-snaps: [rustup]
+    override-pull: |
+      craftctl default
+      craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+    override-build: |
+      case "$CRAFT_ARCH_BUILD_FOR" in
+        amd64) TARGET=x86_64-unknown-linux-musl ;;
+        arm64) TARGET=aarch64-unknown-linux-musl ;;
+        *) echo "unsupported architecture $CRAFT_ARCH_BUILD_FOR" >&2; exit 1 ;;
+      esac
+      export CARGO_TARGET_DIR="$CRAFT_PART_BUILD/cargo-target"
+      rustup toolchain install
+      rustup target add "$TARGET"
+      cargo build --release --locked --target "$TARGET" \
+        -p collocate -p collocated -p collocate-controller -p collocate-init -p collocate-gateway
+      OUT="$CARGO_TARGET_DIR/$TARGET/release"
+      install -D -m 755 -t "$CRAFT_PART_INSTALL/bin" \
+        "$OUT/collocate" "$OUT/collocate-relay" "$OUT/collocated" \
+        "$OUT/collocate-controller" "$OUT/collocate-init" "$OUT/collocate-gateway"
+      install -d "$CRAFT_PART_INSTALL/share/bash-completion/completions"
+      if [ "$CRAFT_ARCH_BUILD_FOR" = "$CRAFT_ARCH_BUILD_ON" ]; then
+        "$OUT/collocate" completion bash > "$CRAFT_PART_INSTALL/share/bash-completion/completions/collocate"
+      fi
+
+  tools:
+    plugin: nil
+    stage-packages:
+      - nftables
+      - iproute2
+      - fuse-overlayfs
+    prime:
+      - -usr/share/doc
+      - -usr/share/man
+      - -usr/share/lintian
+      - -usr/share/bash-completion
+      - -etc
+
+  lxc:
+    plugin: nil
+    stage-snaps: [lxd/6/stable]
+    stage:
+      - bin/lxc

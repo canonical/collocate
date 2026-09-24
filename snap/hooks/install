@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+mkdir -p "$SNAP_COMMON/run" "$SNAP_COMMON/state" "$SNAP_COMMON/lxc" "$SNAP_COMMON/controller"
+chmod 0755 "$SNAP_COMMON/run" "$SNAP_COMMON/lxc"
+chmod 0700 "$SNAP_COMMON/state"
