@@ -488,6 +488,9 @@ pub fn run(cli: &Cli) -> Result<i32> {
             }
             Ok(0)
         }
+        Command::Init(a) => crate::init::init(cli, a),
+        Command::Remote(c) => crate::access::remote(cli, c),
+        Command::Trust(c) => crate::access::trust(cli, c),
         Command::Info => match call(cli, Request::Info)? {
             Response::Text { text } => {
                 if cli.format == Format::Json {

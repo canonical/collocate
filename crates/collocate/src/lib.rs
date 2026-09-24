@@ -1,6 +1,9 @@
+pub mod access;
 pub mod cli;
 pub mod commands;
+pub mod init;
 pub mod output;
 pub mod runspec;
 pub mod status;
 pub mod table;
+pub mod transport;
