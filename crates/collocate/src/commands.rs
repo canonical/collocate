@@ -17,17 +17,14 @@ use collocate_image::pull::PullPolicy;
 use collocate_sys::fdpass::SendWithFds;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-fn connect(cli: &Cli) -> Result<Client<UnixStream>> {
-    Client::connect(&cli.host)
+fn call(cli: &Cli, req: Request) -> Result<Response> {
+    crate::transport::call(cli, req)
 }
 
-fn call(cli: &Cli, req: Request) -> Result<Response> {
-    connect(cli)?.call(&req)
-}
+pub(crate) use crate::transport::socket_hint;
 
 fn host_series() -> Series {
     let text = std::fs::read_to_string("/etc/os-release").unwrap_or_default();

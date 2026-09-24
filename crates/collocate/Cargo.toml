@@ -25,6 +25,9 @@ collocate-image.workspace = true
 collocate-registry.workspace = true
 collocate-cluster.workspace = true
 collocate-store.workspace = true
+collocate-net.workspace = true
+collocate-remote.workspace = true
+collocate-trust.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde-saphyr.workspace = true
@@ -37,6 +40,7 @@ tempfile.workspace = true
 tar.workspace = true
 sha2.workspace = true
 collocated = { path = "../collocated" }
+collocate-gateway = { path = "../collocate-gateway" }
 
 [package.metadata.deb]
 name = "collocate"
