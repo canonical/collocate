@@ -43,6 +43,7 @@ collocate-controller = { path = "crates/collocate-controller" }
 collocate-cluster = { path = "crates/collocate-cluster" }
 collocate-trust = { path = "crates/collocate-trust" }
 collocate-remote = { path = "crates/collocate-remote" }
+collocate-gateway = { path = "crates/collocate-gateway" }
 
 [profile.release]
 opt-level = "z"

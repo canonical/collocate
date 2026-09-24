@@ -334,6 +334,10 @@ name = "collocate-remote"
 version = "0.1.0"
 dependencies = [
  "collocate-core",
+ "collocate-gateway",
+ "collocate-image",
+ "collocate-registry",
+ "collocate-sys",
  "collocate-trust",
  "httparse",
  "rustls",

@@ -8,6 +8,9 @@ description = "HTTPS transport for collocate: TLS setup, HTTP framing, remotes a
 [dependencies]
 collocate-core.workspace = true
 collocate-trust.workspace = true
+collocate-sys.workspace = true
+collocate-image.workspace = true
+collocate-registry.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde-saphyr.workspace = true
@@ -18,4 +21,6 @@ httparse.workspace = true
 tungstenite.workspace = true
 
 [dev-dependencies]
+collocate-gateway.workspace = true
+collocate-trust.workspace = true
 tempfile.workspace = true
