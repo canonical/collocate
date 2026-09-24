@@ -199,3 +199,15 @@ fn adopt_keeps_uuid_and_reinit_clears_containers() {
     assert_ne!(fresh.node_uuid, a.node_uuid);
     assert!(st.load_all().unwrap().is_empty());
 }
+
+#[test]
+fn node_metadata_follows_init_but_never_strands_containers() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = collocate_store::NodeStore::open(dir.path().join("state"), dir.path().join("run")).unwrap();
+    store.open_node("local", "10.1.0.0/16", "machine").unwrap();
+    let renamed = store.update_node("edge-1", "10.1.0.0/16").unwrap();
+    assert_eq!(renamed.name, "edge-1");
+    let moved = store.update_node("edge-1", "10.2.0.0/16").unwrap();
+    assert_eq!(moved.subnet, "10.2.0.0/16");
+    assert_eq!(store.open_node("edge-1", "10.2.0.0/16", "machine").unwrap().node_uuid, renamed.node_uuid);
+}

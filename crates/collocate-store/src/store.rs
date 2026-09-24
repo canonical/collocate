@@ -110,6 +110,20 @@ impl NodeStore {
         }
     }
 
+    pub fn update_node(&self, name: &str, subnet: &str) -> Result<NodeMeta> {
+        let mut meta = self.read_node()?.ok_or_else(|| Error::NotFound("node metadata".into()))?;
+        if meta.subnet != subnet {
+            let remaining = self.load_all()?.len();
+            if remaining > 0 {
+                return Err(Error::Conflict(format!("{remaining} containers still use subnet {}", meta.subnet)));
+            }
+            meta.subnet = subnet.to_string();
+        }
+        meta.name = name.to_string();
+        self.write_node(&meta)?;
+        Ok(meta)
+    }
+
     pub fn adopt_node(&self, instance_id: &str) -> Result<NodeMeta> {
         let mut meta = self.read_node()?.ok_or_else(|| Error::NotFound("node metadata".into()))?;
         meta.instance_id = instance_id.to_string();
