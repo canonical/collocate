@@ -587,6 +587,7 @@ impl Daemon {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| Error::Internal(format!("fuse-overlayfs: {e}")))?;
+        let _ = fs::write(self.cgroups.supervisor_dir().join("cgroup.procs"), child.id().to_string());
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             if let Ok(Some(status)) = child.try_wait() {
