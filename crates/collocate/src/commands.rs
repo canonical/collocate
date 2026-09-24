@@ -1,13 +1,17 @@
-use crate::cli::{Cli, ClusterArgs, ClusterCmd, Command, ComposeArgs, ImageCmd, LoadBalancerArgs, LoadBalancerCmd, NodeCmd, SecretCmd};
+use crate::cli::{Cli, ClusterCmd, Command, ComposeArgs, ImageCmd, LoadBalancerArgs, LoadBalancerCmd, NodeCmd, SecretCmd};
 use crate::output::{self, confirm, is_interactive, success_line, terminal_width, Format, Verbosity};
 use crate::runspec::build_spec;
 use crate::status::{format_ports, format_process, format_uptime, read_listening, read_procs, read_uptime};
 use crate::table::{empty_state, render_with, TableOptions};
+use collocate_cluster::lxc::Lxc;
+use collocate_cluster::preseed::{LxdTarget, NodeRecord, Registry};
+use collocate_cluster::provision::Install;
 use collocate_compose::build::signal_number;
 use collocate_compose::convert::convert_docker_compose;
 use collocate_compose::model::ComposeFile;
 use collocate_compose::up::{down, plan_only, up, UpOptions};
 use collocate_core::client::Client;
+use collocate_core::layout::Layout;
 use collocate_core::net::{Algorithm, NoBackends, Proto};
 use collocate_core::request::{ContainerInfo, LbSpec, LbStatus, LogSource, Request, Response, State};
 use collocate_core::spec::{ImageKind, Series};
@@ -867,23 +871,54 @@ fn node(cli: &Cli, cmd: &NodeCmd) -> Result<i32> {
     Ok(0)
 }
 
-fn lxc_output(program: &str, args: &[String]) -> Result<String> {
-    let out = std::process::Command::new(program).args(args).output().map_err(|e| Error::Unreachable(format!("{program}: {e}")))?;
-    if !out.status.success() {
-        return Err(Error::Internal(format!("{program} {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+struct ClusterCtx {
+    lxc: Lxc,
+    target: LxdTarget,
+    relay: String,
+    registry: Registry,
+    registered: bool,
 }
 
-fn node_apis(a: &ClusterArgs, file: &ComposeFile) -> Result<Vec<(String, Box<dyn collocate_core::client::Api>)>> {
-    let relay = vec![a.relay.clone()];
-    file.nodes
-        .keys()
+fn cluster_ctx(lxc: &str, relay: Option<&str>) -> Result<ClusterCtx> {
+    let layout = Layout::detect();
+    let loaded = Registry::load(&layout.cluster_registry)?;
+    let registered = loaded.is_some();
+    let registry = loaded.unwrap_or_default();
+    let relay = relay.map(String::from).unwrap_or_else(|| if registered { registry.relay() } else { layout.relay.clone() });
+    Ok(ClusterCtx { lxc: Lxc::new(lxc), target: registry.target(), relay, registry, registered })
+}
+
+fn save_registry(ctx: &ClusterCtx) -> Result<()> {
+    ctx.registry.save(&Layout::detect().cluster_registry)
+}
+
+fn node_apis(ctx: &ClusterCtx, nodes: &[String]) -> Result<Vec<(String, Box<dyn collocate_core::client::Api>)>> {
+    nodes
+        .iter()
         .map(|n| {
-            Ok((
-                n.clone(),
-                Box::new(collocate_cluster::transport::LxcApi::spawn(&a.lxc, n, &relay)?) as Box<dyn collocate_core::client::Api>,
-            ))
+            Ok((n.clone(), Box::new(crate::init::node_api(&ctx.lxc, &ctx.target, n, &ctx.relay)?) as Box<dyn collocate_core::client::Api>))
+        })
+        .collect()
+}
+
+fn record_of(def: &collocate_compose::model::NodeDef) -> NodeRecord {
+    NodeRecord { target: def.target.clone(), image: def.image.clone(), cpus: def.cpus, memory: def.memory.clone() }
+}
+
+fn cluster_status_rows(statuses: &[collocate_cluster::status::NodeStatus]) -> Vec<Vec<String>> {
+    statuses
+        .iter()
+        .flat_map(|s| {
+            if s.containers.is_empty() {
+                vec![vec![
+                    s.name.clone(),
+                    if s.reachable { "reachable".into() } else { format!("unreachable: {}", s.error.clone().unwrap_or_default()) },
+                    "—".into(),
+                    "—".into(),
+                ]]
+            } else {
+                s.containers.iter().map(|c| vec![s.name.clone(), "reachable".into(), c.name.clone(), state_word(c.state).into()]).collect()
+            }
         })
         .collect()
 }
@@ -891,22 +926,85 @@ fn node_apis(a: &ClusterArgs, file: &ComposeFile) -> Result<Vec<(String, Box<dyn
 fn cluster(cli: &Cli, cmd: &ClusterCmd) -> Result<i32> {
     match cmd {
         ClusterCmd::List { lxc } => {
-            let nodes = collocate_cluster::lxc::running_nodes(&lxc_output(lxc, &collocate_cluster::lxc::list_args())?)?;
+            let ctx = cluster_ctx(lxc, None)?;
+            let states =
+                collocate_cluster::provision::instance_states(&ctx.lxc.run(&collocate_cluster::provision::list_args(&ctx.target), None)?)?;
+            let rows: Vec<Vec<String>> = if ctx.registered {
+                ctx.registry
+                    .nodes
+                    .iter()
+                    .map(|(n, rec)| {
+                        vec![
+                            n.clone(),
+                            states.get(n).cloned().unwrap_or_else(|| "Missing".into()),
+                            rec.target.clone().unwrap_or_else(|| "—".into()),
+                        ]
+                    })
+                    .collect()
+            } else {
+                states.iter().filter(|(_, st)| st.as_str() == "Running").map(|(n, st)| vec![n.clone(), st.clone(), "—".into()]).collect()
+            };
             if cli.format == Format::Json {
-                json(&nodes);
-            } else if nodes.is_empty() {
+                let objs: Vec<serde_json::Value> =
+                    rows.iter().map(|r| serde_json::json!({"node": r[0], "state": r[1], "target": r[2]})).collect();
+                json(&objs);
+            } else if rows.is_empty() {
                 print!("{}", empty_state("No nodes found."));
             } else {
-                for n in nodes {
-                    println!("{n}");
-                }
+                print!("{}", render_with(&["NODE", "STATE", "TARGET"], &rows, &table_opts(&[], false, false)));
             }
             Ok(0)
         }
+        ClusterCmd::AddNode(a) => {
+            let mut ctx = cluster_ctx(&a.lxc, None)?;
+            if !collocate_cluster::preseed::valid_instance_name(&a.name) {
+                return Err(Error::Invalid(format!("node name {:?} is not a valid LXD instance name", a.name)));
+            }
+            if let Some(i) = &a.install {
+                ctx.registry.install = i.clone();
+            }
+            let install = Install::parse(&ctx.registry.install)?;
+            let rec = NodeRecord { target: a.target.clone(), image: a.image.clone(), cpus: a.cpus, memory: a.memory.clone() };
+            let nodes: std::collections::BTreeMap<String, NodeRecord> = [(a.name.clone(), rec.clone())].into();
+            crate::init::provision_nodes(cli, &ctx.lxc, &ctx.target, &nodes, &ctx.registry.image, &install, &ctx.registry.daemon)?;
+            ctx.registry.nodes.insert(a.name.clone(), rec);
+            save_registry(&ctx)?;
+            narrate(cli, &success_line("Added node", &a.name));
+            Ok(0)
+        }
+        ClusterCmd::RemoveNode { name, keep_instance, lxc } => {
+            let mut ctx = cluster_ctx(lxc, None)?;
+            if !ctx.registry.nodes.contains_key(name) {
+                return Err(Error::NotFound(format!("node {name} is not in the cluster registry")));
+            }
+            let prompt = if *keep_instance {
+                format!("Remove node {name} from the cluster registry?")
+            } else {
+                format!("Delete node {name} and every container on it?")
+            };
+            if !confirm_action(cli, &prompt)? {
+                return Ok(abort());
+            }
+            if !keep_instance {
+                ctx.lxc.run(&collocate_cluster::provision::delete_args(&ctx.target, name), None)?;
+            }
+            ctx.registry.nodes.remove(name);
+            save_registry(&ctx)?;
+            narrate(cli, &success_line("Removed node", name));
+            Ok(0)
+        }
         ClusterCmd::Status(a) => {
-            let file = ComposeFile::load(&std::fs::read_to_string(&a.file)?)?;
-            let mut nodes = node_apis(a, &file)?;
-            let statuses = collocate_cluster::status::cluster_status(&mut nodes, Some(&file.project));
+            let ctx = cluster_ctx(&a.lxc, a.relay.as_deref())?;
+            let (nodes, project): (Vec<String>, Option<String>) = if a.file.is_file() {
+                let file = ComposeFile::load(&std::fs::read_to_string(&a.file)?)?;
+                let nodes =
+                    if file.nodes.is_empty() { ctx.registry.nodes.keys().cloned().collect() } else { file.nodes.keys().cloned().collect() };
+                (nodes, Some(file.project))
+            } else {
+                (ctx.registry.nodes.keys().cloned().collect(), None)
+            };
+            let mut apis = node_apis(&ctx, &nodes)?;
+            let statuses = collocate_cluster::status::cluster_status(&mut apis, project.as_deref());
             if cli.format == Format::Json {
                 let objs: Vec<serde_json::Value> = statuses
                     .iter()
@@ -916,34 +1014,36 @@ fn cluster(cli: &Cli, cmd: &ClusterCmd) -> Result<i32> {
             } else if statuses.is_empty() {
                 print!("{}", empty_state("No nodes found."));
             } else {
-                let rows: Vec<Vec<String>> = statuses
-                    .iter()
-                    .flat_map(|s| {
-                        if s.containers.is_empty() {
-                            vec![vec![
-                                s.name.clone(),
-                                if s.reachable {
-                                    "reachable".into()
-                                } else {
-                                    format!("unreachable: {}", s.error.clone().unwrap_or_default())
-                                },
-                                "—".into(),
-                                "—".into(),
-                            ]]
-                        } else {
-                            s.containers
-                                .iter()
-                                .map(|c| vec![s.name.clone(), "reachable".into(), c.name.clone(), state_word(c.state).into()])
-                                .collect()
-                        }
-                    })
-                    .collect();
-                print!("{}", render_with(&["NODE", "STATUS", "CONTAINER", "STATE"], &rows, &table_opts(&[], false, false)));
+                print!(
+                    "{}",
+                    render_with(&["NODE", "STATUS", "CONTAINER", "STATE"], &cluster_status_rows(&statuses), &table_opts(&[], false, false))
+                );
             }
             Ok(i32::from(statuses.iter().any(|s| !s.reachable)))
         }
         ClusterCmd::Up(a) => {
-            let file = ComposeFile::load(&std::fs::read_to_string(&a.file)?)?;
+            let mut file = ComposeFile::load(&std::fs::read_to_string(&a.file)?)?;
+            let mut ctx = cluster_ctx(&a.lxc, a.relay.as_deref())?;
+            if file.nodes.is_empty() {
+                if ctx.registry.nodes.is_empty() {
+                    return Err(Error::Invalid(
+                        "the compose file declares no nodes and the cluster registry is empty; run 'collocate init --mode lxd' first"
+                            .into(),
+                    ));
+                }
+                for n in ctx.registry.nodes.keys() {
+                    file.nodes.insert(n.clone(), collocate_compose::model::NodeDef::default());
+                }
+            }
+            for (name, svc) in &file.services {
+                if let Some(n) = &svc.node {
+                    if !file.nodes.contains_key(n) {
+                        return Err(Error::Invalid(format!(
+                            "service {name} uses node {n}, which is neither declared in the file nor registered"
+                        )));
+                    }
+                }
+            }
             let cross = collocate_cluster::plan::cross_node_references(&file);
             if !cross.is_empty() {
                 return Err(Error::Invalid(format!(
@@ -951,12 +1051,25 @@ fn cluster(cli: &Cli, cmd: &ClusterCmd) -> Result<i32> {
                     cross.join("; ")
                 )));
             }
-            let running = collocate_cluster::lxc::running_nodes(&lxc_output(&a.lxc, &collocate_cluster::lxc::list_args())?)?;
-            for step in collocate_cluster::plan::provision_plan(&file, &running, &a.deb) {
-                narrate_detail(cli, &format!("{step:?}"));
-                lxc_output(&a.lxc, &step.lxc_args())?;
+            if let Some(i) = &a.install {
+                ctx.registry.install = i.clone();
             }
-            let relay = vec![a.relay.clone()];
+            let install = Install::parse(&ctx.registry.install)?;
+            let mut records = std::collections::BTreeMap::new();
+            for (name, def) in &file.nodes {
+                let mut rec = record_of(def);
+                if let Some(known) = ctx.registry.nodes.get(name) {
+                    rec.target = rec.target.or_else(|| known.target.clone());
+                    rec.image = rec.image.or_else(|| known.image.clone());
+                    rec.cpus = rec.cpus.or(known.cpus);
+                    rec.memory = rec.memory.or_else(|| known.memory.clone());
+                }
+                records.insert(name.clone(), rec);
+            }
+            crate::init::provision_nodes(cli, &ctx.lxc, &ctx.target, &records, &ctx.registry.image, &install, &ctx.registry.daemon)?;
+            ctx.relay = install.relay().to_string();
+            ctx.registry.nodes.extend(records);
+            save_registry(&ctx)?;
             let mut subs: Vec<(String, ComposeFile)> = Vec::new();
             for node in file.nodes.keys() {
                 let mut sub = file.clone();
@@ -975,20 +1088,17 @@ fn cluster(cli: &Cli, cmd: &ClusterCmd) -> Result<i32> {
                     subs.push((node.clone(), sub));
                 }
             }
-            let mut node_apis: std::collections::BTreeMap<String, Box<dyn collocate_core::client::Api>> = std::collections::BTreeMap::new();
-            for (node, _) in &subs {
-                let api = collocate_cluster::transport::LxcApi::spawn(&a.lxc, node, &relay)?;
-                node_apis.insert(node.clone(), Box::new(api));
-            }
-            collocate_cluster::secrets::replicate_secrets(&file, &mut node_apis)?;
+            let mut apis: std::collections::BTreeMap<String, Box<dyn collocate_core::client::Api>> =
+                node_apis(&ctx, &subs.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>())?.into_iter().collect();
+            collocate_cluster::secrets::replicate_secrets(&file, &mut apis)?;
             for (node, sub) in &subs {
-                let api = node_apis.get_mut(node).ok_or_else(|| Error::Internal(format!("no connection to node {node}")))?;
+                let api = apis.get_mut(node).ok_or_else(|| Error::Internal(format!("no connection to node {node}")))?;
                 let subnet = match api.call(Request::Info)? {
                     Response::Text { text } => serde_json::from_str::<serde_json::Value>(&text)
                         .ok()
                         .and_then(|v| v["subnet"].as_str().map(String::from))
-                        .unwrap_or_else(|| "172.30.0.0/16".into()),
-                    _ => "172.30.0.0/16".into(),
+                        .unwrap_or_else(|| collocate_core::settings::DEFAULT_SUBNET.into()),
+                    _ => collocate_core::settings::DEFAULT_SUBNET.into(),
                 };
                 let opts = UpOptions {
                     subnet,
@@ -997,7 +1107,6 @@ fn cluster(cli: &Cli, cmd: &ClusterCmd) -> Result<i32> {
                         .parent()
                         .filter(|p| !p.as_os_str().is_empty())
                         .map_or_else(|| std::path::PathBuf::from("."), Path::to_path_buf),
-                    state_dir: cli.state_dir.clone(),
                     regenerate_secrets: None,
                     dry_run: false,
                     ready_timeout: Duration::from_secs(a.timeout),

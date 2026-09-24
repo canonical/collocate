@@ -65,9 +65,23 @@ fn cluster_subcommands_parse() {
     use clap::Parser;
     for args in [
         vec!["collocate", "cluster", "list"],
-        vec!["collocate", "cluster", "up", "-f", "c.yaml", "--deb", "./c.deb"],
+        vec!["collocate", "cluster", "up", "-f", "c.yaml", "--install", "deb:./c.deb"],
         vec!["collocate", "cluster", "status", "-f", "c.yaml", "--lxc", "/usr/bin/lxc"],
+        vec!["collocate", "cluster", "add-node", "edge-3", "--target", "lxd2", "--memory", "2g"],
+        vec!["collocate", "cluster", "remove-node", "edge-3", "--keep-instance"],
+        vec!["collocate", "init", "--auto", "--mode", "lxd", "--nodes", "2", "--install", "channel:latest/edge"],
+        vec!["collocate", "init", "--preseed"],
+        vec!["collocate", "init", "--dump", "--format", "json"],
+        vec!["collocate", "up", "--managed"],
     ] {
         collocate_cli::cli::Cli::try_parse_from(args.clone()).unwrap_or_else(|e| panic!("{args:?}: {e}"));
+    }
+    for args in [
+        vec!["collocate", "cluster", "up", "--deb", "./c.deb"],
+        vec!["collocate", "init", "--auto", "--preseed"],
+        vec!["collocate", "init", "--lxd-url", "https://x"],
+        vec!["collocate", "init", "--mode", "cloud"],
+    ] {
+        assert!(collocate_cli::cli::Cli::try_parse_from(args.clone()).is_err(), "{args:?} should not parse");
     }
 }
