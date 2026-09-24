@@ -15,11 +15,24 @@ fn parses_suffixes_case_insensitively() {
 }
 
 #[test]
+fn parses_binary_and_byte_suffixes() {
+    assert_eq!(parse_size("100B").unwrap(), 100);
+    assert_eq!(parse_size("64Ki").unwrap(), 64 * 1024);
+    assert_eq!(parse_size("512Mi").unwrap(), 512 * 1024 * 1024);
+    assert_eq!(parse_size("2GiB").unwrap(), 2 * 1024 * 1024 * 1024);
+    assert_eq!(parse_size("1Ti").unwrap(), 1 << 40);
+    assert_eq!(parse_size("4KB").unwrap(), 4 * 1024);
+    assert_eq!(parse_size("512MB").unwrap(), 512 * 1024 * 1024);
+}
+
+#[test]
 fn rejects_garbage() {
     assert!(matches!(parse_size(""), Err(Error::InvalidSize(_))));
     assert!(matches!(parse_size("12x"), Err(Error::InvalidSize(_))));
     assert!(matches!(parse_size("-5m"), Err(Error::InvalidSize(_))));
     assert!(matches!(parse_size("99999999999999999999g"), Err(Error::InvalidSize(_))));
+    assert!(matches!(parse_size("k"), Err(Error::InvalidSize(_))));
+    assert!(matches!(parse_size("5i"), Err(Error::InvalidSize(_))));
 }
 
 fn writes(l: &Limits) -> Vec<(String, String)> {

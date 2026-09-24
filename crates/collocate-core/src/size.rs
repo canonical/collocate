@@ -6,17 +6,29 @@ pub fn parse_size(input: &str) -> Result<u64> {
     if s.is_empty() {
         return Err(bad());
     }
-    let (digits, shift) = match s.chars().last().map(|c| c.to_ascii_lowercase()) {
-        Some('k') => (&s[..s.len() - 1], 10),
-        Some('m') => (&s[..s.len() - 1], 20),
-        Some('g') => (&s[..s.len() - 1], 30),
-        Some('t') => (&s[..s.len() - 1], 40),
-        _ => (s, 0),
-    };
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    let bytes = s.as_bytes();
+    let mut end = bytes.len();
+    let mut shift = 0u32;
+    if end > 0 && matches!(bytes[end - 1], b'B' | b'b') {
+        end -= 1;
+    }
+    if end > 1 && matches!(bytes[end - 1], b'i' | b'I') && matches!(bytes[end - 2], b'k' | b'K' | b'm' | b'M' | b'g' | b'G' | b't' | b'T') {
+        end -= 1;
+    }
+    if end > 0 && bytes[end - 1].is_ascii_alphabetic() {
+        shift = match bytes[end - 1] {
+            b'k' | b'K' => 10,
+            b'm' | b'M' => 20,
+            b'g' | b'G' => 30,
+            b't' | b'T' => 40,
+            _ => return Err(bad()),
+        };
+        end -= 1;
+    }
+    if end == 0 || !s[..end].bytes().all(|b| b.is_ascii_digit()) {
         return Err(bad());
     }
-    let n: u64 = digits.parse().map_err(|_| bad())?;
+    let n: u64 = s[..end].parse().map_err(|_| bad())?;
     n.checked_mul(1u64 << shift).ok_or_else(bad)
 }
 
