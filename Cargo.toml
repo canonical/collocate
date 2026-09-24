@@ -22,6 +22,12 @@ tar = "0.4"
 flate2 = "1"
 ruzstd = "0.9"
 toml = "0.8"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+httparse = "1"
+tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
+base64 = "0.22"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 collocate-registry = { path = "crates/collocate-registry" }
 collocate-pebble = { path = "crates/collocate-pebble" }
@@ -35,6 +41,8 @@ collocate-image = { path = "crates/collocate-image" }
 collocate-compose = { path = "crates/collocate-compose" }
 collocate-controller = { path = "crates/collocate-controller" }
 collocate-cluster = { path = "crates/collocate-cluster" }
+collocate-trust = { path = "crates/collocate-trust" }
+collocate-remote = { path = "crates/collocate-remote" }
 
 [profile.release]
 opt-level = "z"
